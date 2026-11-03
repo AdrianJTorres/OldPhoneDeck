@@ -2,9 +2,7 @@ import AVFoundation
 import CoreAudio
 import Network
 
-/// Receives camera + mic from the PhoneCam iOS app on port+1.
-/// Wire format per message: 1 byte type | 4 bytes big-endian length | payload.
-///   'H' token  ·  'V' JPEG frame  ·  'A' 16 kHz mono s16le PCM
+/// Receives browser camera/mic over WSS: one binary message = type byte + payload.
 final class PhoneMediaServer {
     // Receives camera + mic from a modern iPhone's browser over a secure WebSocket.
     // Each binary message: 1 type byte + payload.  'H' token  ·  'V' JPEG frame  ·  'A' 16 kHz mono s16le PCM
@@ -15,61 +13,155 @@ final class PhoneMediaServer {
     private var _latestFrame: Data?
     private var _lastFrameAt = Date.distantPast
     private var wsListener: NWListener?
+    private let sessions = MediaSessionBudget()
+    private var connections: [UUID: MediaWebSocketConnection] = [:]
+    private let authenticationTimeout: TimeInterval
     var onFrame: ((Data) -> Void)?
 
     var latestFrame: Data? { lock.lock(); defer { lock.unlock() }; return _latestFrame }
     var isLive: Bool { lock.lock(); defer { lock.unlock() }; return Date().timeIntervalSince(_lastFrameAt) < 2 }
 
-    init(token: String, audio: AudioOut?) {
+    init(token: String, audio: AudioOut?, authenticationTimeout: TimeInterval = 5) {
         self.token = token
         self.audio = audio
+        self.authenticationTimeout = authenticationTimeout
     }
 
-    func handle(type: UInt8, payload: Data) {
-        switch type {
-        case UInt8(ascii: "V"):
+    private func handle(_ message: PhoneMediaMessage) {
+        switch message {
+        case .video(let payload):
             lock.lock(); _latestFrame = payload; _lastFrameAt = Date(); lock.unlock()
             onFrame?(payload)
-        case UInt8(ascii: "A"):
+        case .audio(let payload):
             audio?.play(pcm16: payload)
-        default:
-            break
+        case .authentication: break
         }
     }
 
     func startWebSocket(port: UInt16, identity: sec_identity_t) throws {
-        let ws = try NWListener(using: LocalTLS.parameters(identity, websocket: true), on: NWEndpoint.Port(rawValue: port)!)
-        ws.newConnectionHandler = { [weak self] conn in self?.accept(conn) }
+        try startWebSocket(parameters: LocalTLS.parameters(identity, websocket: true), on: NWEndpoint.Port(rawValue: port)!)
+    }
+
+    // Parameters are injectable for local Network.framework tests without certificates or app startup.
+    func startWebSocket(parameters: NWParameters, on port: NWEndpoint.Port) throws {
+        let ws = try NWListener(using: parameters, on: port)
+        ws.newConnectionHandler = { [weak self] conn in
+            guard let self else { conn.cancel(); return }
+            self.accept(conn)
+        }
         ws.start(queue: queue)
         wsListener = ws
     }
 
+    var listeningPort: NWEndpoint.Port? { wsListener?.port }
+    var resourceCounts: (connections: Int, producers: Int) {
+        queue.sync { (sessions.count, sessions.producer == nil ? 0 : 1) }
+    }
+
+    func stop() {
+        queue.sync {
+            wsListener?.cancel()
+            for connection in Array(connections.values) { connection.close() }
+        }
+    }
+
     private func accept(_ conn: NWConnection) {
-        conn.start(queue: queue)
-        var authed = false
-        func receive() {
-            conn.receiveMessage { [weak self] data, _, _, error in
-                guard let self, error == nil else {
-                    if authed { print("Phone stopped streaming") }
-                    return conn.cancel()
+        guard let id = sessions.acquire() else { conn.cancel(); return }
+        let connection = MediaWebSocketConnection(conn, id: id, sessions: sessions, token: token,
+            queue: queue, authenticationTimeout: authenticationTimeout,
+            handle: { [weak self] in self?.handle($0) },
+            onClose: { [weak self] in self?.connections[id] = nil })
+        connections[id] = connection
+        connection.start()
+    }
+}
+
+/// All state, timer, receive and cleanup callbacks run on PhoneMediaServer's queue.
+private final class MediaWebSocketConnection {
+    private let conn: NWConnection
+    private let id: UUID
+    private let sessions: MediaSessionBudget
+    private let token: String
+    private let queue: DispatchQueue
+    private let authenticationTimeout: TimeInterval
+    private let handle: (PhoneMediaMessage) -> Void
+    private var onClose: (() -> Void)?
+    private var deadline: DispatchWorkItem?
+    private var becameReady = false
+    private var closed = false
+
+    init(_ conn: NWConnection, id: UUID, sessions: MediaSessionBudget, token: String,
+         queue: DispatchQueue, authenticationTimeout: TimeInterval,
+         handle: @escaping (PhoneMediaMessage) -> Void, onClose: @escaping () -> Void) {
+        self.conn = conn
+        self.id = id
+        self.sessions = sessions
+        self.token = token
+        self.queue = queue
+        self.authenticationTimeout = authenticationTimeout
+        self.handle = handle
+        self.onClose = onClose
+    }
+
+    deinit { conn.cancel() }
+
+    func start() {
+        conn.stateUpdateHandler = { [weak self] state in
+            guard let self, !self.closed else { return }
+            switch state {
+            case .ready:
+                guard !self.becameReady else { return }
+                self.becameReady = true
+                if self.sessions.producer != self.id {
+                    let work = DispatchWorkItem { [weak self] in self?.close() }
+                    self.deadline = work
+                    self.queue.asyncAfter(deadline: .now() + self.authenticationTimeout, execute: work)
                 }
-                if let data, let type = data.first {
-                    let payload = data.dropFirst()
-                    if !authed {
-                        guard type == UInt8(ascii: "H"), String(data: payload, encoding: .utf8) == self.token else {
-                            print("Stream: rejected a bad token")
-                            return conn.cancel()
-                        }
-                        authed = true
-                        print("Phone streaming from \(conn.endpoint)")
-                    } else {
-                        self.handle(type: type, payload: Data(payload))
-                    }
-                }
-                receive()
+            case .failed, .cancelled: self.close()
+            default: break
             }
         }
+        conn.start(queue: queue)
         receive()
+    }
+
+    func close() {
+        guard !closed else { return }
+        closed = true
+        deadline?.cancel()
+        deadline = nil
+        sessions.release(id)
+        conn.cancel()
+        let callback = onClose
+        onClose = nil
+        callback?()
+    }
+
+    private func receive() {
+        conn.receiveMessage { [weak self] data, context, complete, error in
+            guard let self, !self.closed else { return }
+            guard error == nil,
+                  let metadata = context?.protocolMetadata(definition: NWProtocolWebSocket.definition) as? NWProtocolWebSocket.Metadata else {
+                self.close(); return
+            }
+            switch metadata.opcode {
+            case .ping, .pong:
+                // autoReplyPing remains enabled; control traffic cannot authenticate or extend the deadline.
+                self.receive(); return
+            case .binary: break
+            default: self.close(); return
+            }
+            guard complete, let data,
+                  let message = PhoneMediaMessage.parse(data, authenticated: self.sessions.producer == self.id, token: self.token) else {
+                self.close(); return
+            }
+            if message == .authentication {
+                guard self.sessions.authenticate(self.id) else { self.close(); return }
+                self.deadline?.cancel()
+                self.deadline = nil
+            } else { self.handle(message) }
+            self.receive()
+        }
     }
 }
 
@@ -79,8 +171,7 @@ final class AudioOut {
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
     private let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false)!
-    private let lock = NSLock()
-    private var queuedFrames = 0
+    private let queuedAudio = AudioQueueBudget()
     let deviceName: String
 
     /// Returns nil (and explains why) if no output device matches `deviceMatch`.
@@ -104,22 +195,21 @@ final class AudioOut {
     }
 
     func play(pcm16 data: Data) {
-        let frames = data.count / 2
-        guard frames > 0, let buf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frames)) else { return }
-        lock.lock()
-        // Keep latency bounded: if more than ~250 ms is queued (Wi-Fi hiccup), drop this chunk.
-        if queuedFrames > 4000 { lock.unlock(); return }
-        queuedFrames += frames
-        lock.unlock()
+        guard let frames = queuedAudio.reserve(bytes: data.count) else { return }
+        guard let buf = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frames)) else {
+            queuedAudio.complete(frames: frames)
+            return
+        }
         buf.frameLength = AVAudioFrameCount(frames)
         let out = buf.floatChannelData![0]
         data.withUnsafeBytes { raw in
-            let s = raw.bindMemory(to: Int16.self)
-            for i in 0..<frames { out[i] = Float(Int16(littleEndian: s[i])) / 32768 }
+            for i in 0..<frames {
+                let sample = raw.loadUnaligned(fromByteOffset: i * 2, as: Int16.self)
+                out[i] = Float(Int16(littleEndian: sample)) / 32768
+            }
         }
-        player.scheduleBuffer(buf) { [weak self] in
-            guard let self else { return }
-            self.lock.lock(); self.queuedFrames -= frames; self.lock.unlock()
+        player.scheduleBuffer(buf, completionCallbackType: .dataPlayedBack) { [queuedAudio] _ in
+            queuedAudio.complete(frames: frames)
         }
     }
 

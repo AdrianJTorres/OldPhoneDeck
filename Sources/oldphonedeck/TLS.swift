@@ -99,11 +99,15 @@ enum LocalTLS {
         sec_protocol_options_set_local_identity(tls.securityProtocolOptions, identity)
         let params = NWParameters(tls: tls)
         if websocket {
-            let ws = NWProtocolWebSocket.Options()
-            ws.autoReplyPing = true
-            ws.maximumMessageSize = 8 << 20
-            params.defaultProtocolStack.applicationProtocols.insert(ws, at: 0)
+            params.defaultProtocolStack.applicationProtocols.insert(webSocketOptions(), at: 0)
         }
         return params
+    }
+
+    static func webSocketOptions() -> NWProtocolWebSocket.Options {
+        let ws = NWProtocolWebSocket.Options()
+        ws.autoReplyPing = true
+        ws.maximumMessageSize = PhoneMediaMessage.maximumMessageSize
+        return ws
     }
 }

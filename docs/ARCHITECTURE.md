@@ -1,8 +1,10 @@
 # ARCHITECTURE.md — PhoneDeck
 
 Architecture reference for coding agents. Describes **current behavior**, including
-M2.1 bounded HTTP admission, and explicitly labelled **planned** extension seams.
-The upstream baseline is `e622184`; M2.1 is not completion of M2 or the M5 review.
+M2.1 bounded HTTP admission and M2.2 media/resource limits, and explicitly labelled
+**planned** extension seams. The upstream baseline is `e622184`; neither slice is
+completion of M2 or the M5 review. M2.2 still requires independent review, physical
+iPhone validation and Steering acceptance.
 
 - Current behavior: §1–§8, §10–§11
 - Known limitations: §12
@@ -78,9 +80,10 @@ binary, stop it with Ctrl-C.
 | `main.swift` | — | Options, token, LAN address, application admission/route wiring, startup | `Options`, `loadToken`, `lanAddress`, `admission`, `routes` |
 | `HTTPServer.swift` | — | Bounded receive/deadlines, one request per connection, responses, MJPEG | `HTTPConnection`, `HTTPServer` |
 | `HTTPParsing.swift` | — | Incremental framing; application route metadata and admission | `HTTPRequestParser`, `HTTPRequestHead`, `HTTPRequest`, `HTTPFailure`, `DeckRoute` |
-| `Tests/oldphonedeckTests/` | — | Swift Testing parser/admission and local socket tests; no app startup | `HTTPParsingTests`, `HTTPConnectionTests` |
-| `TLS.swift` | 109 | Private CA, server cert, PKCS#12 identity, TLS/WS parameters | `LocalTLS.identity/makeCA/makeServerCert/loadIdentity/parameters` |
-| `PhoneMedia.swift` | 153 | WSS ingest of camera/mic, latest-frame cache, audio playback | `PhoneMediaServer`, `AudioOut` |
+| `ResourceLimits.swift` | — | Explicit HTTP/media budgets, message validation, frame handoff, audio accounting | `HTTPConnectionBudget`, `MediaSessionBudget`, `PhoneMediaMessage`, `LatestFrameHandoff`, `AudioQueueBudget` |
+| `Tests/oldphonedeckTests/` | — | Swift Testing parser/resource and HTTP/WS/WSS/TLS socket tests; no app startup | Parsing, lifecycle, budget, handoff and audio tests |
+| `TLS.swift` | — | Private CA, server cert, PKCS#12 identity, TLS/WS parameters | `LocalTLS.identity/makeCA/makeServerCert/loadIdentity/parameters` |
+| `PhoneMedia.swift` | — | Bounded WSS ingest/lifecycle, latest-frame cache, audio playback | `PhoneMediaServer`, `MediaWebSocketConnection`, `AudioOut` |
 | `Control.swift` | 116 | App enumeration/icons/launch, launcher config, Claude deep link, synthetic keys | `Input`, `Apps`, `Launcher`, `Claude` |
 | `Music.swift` | 109 | Now-playing + transport via AppleScript, artwork fetch | `Music` |
 | `Stats.swift` | 166 | Net throughput, speed test, batteries, `Process` helper | `Stats` |
@@ -103,6 +106,15 @@ Clients derive the ports from the page they loaded: `https = port + 2`,
 `wss = port + 3` (`index.html`).
 
 ## 5. Request flow
+
+**Connection admission (M2.2).** Both listeners receive the same `HTTPConnectionBudget`
+from `main.swift`: at most **32 active connections combined**, including incomplete
+requests, responses and MJPEG streams. Acquisition precedes `HTTPConnection` construction
+and connection/TLS startup. Excess connections are cancelled immediately; no `503` is
+attempted because sending it would itself require starting/retaining another connection.
+Each connection holds an idempotent lease. Normal send completion, parser rejection,
+deadline expiry, transport errors and cancellation converge on one close method; it
+cancels the transport, clears parser storage, releases the lease and calls `onClose` once.
 
 **Ingress (M2.1).** `NWListener` → `HTTPConnection.start` → bounded incremental
 headers/framing → application-supplied admission → bounded body → handler. Header-phase
@@ -153,6 +165,18 @@ no-store`, `Connection: close`) and body, then cancels. One request per connecti
 keep-alive, chunk decoding or pipelining. Coalesced bytes beyond the declared body are
 rejected; bytes arriving after dispatch are never interpreted as another request.
 
+**MJPEG (M2.2).** After normal token admission, `MJPEGViewers` admits at most **2 viewers**
+on the shared HTTP queue. Viewer #3 receives `503` and closes without replacing another
+viewer. Each viewer also consumes one of the 32 HTTP slots. Close removes the registry
+entry synchronously. A one-byte receive watches for peer EOF/error or unexpected further
+input even when the camera is idle; any of those ends the stream. Only one JPEG send may
+be in flight per viewer; new frames are dropped during that send.
+
+The WebSocket-to-HTTP handoff stores one latest pending JPEG and schedules at most one
+delivery block. A stalled HTTP queue cannot accumulate a block/data pair per incoming
+frame. During delivery there can additionally be one executing frame; the frame cache and
+each viewer's in-flight send remain separately bounded.
+
 **Traces.**
 
 - *Launch an app*: `POST /launch?k=…` `path=<app>` → `Apps.isKnown` → dispatch to the main
@@ -175,11 +199,39 @@ rejected; bytes arriving after dispatch are never interpreted as another request
   API request.
 - Every known protected API path is checked during header admission by a single
   string comparison against the query token, before body accumulation.
-- The WebSocket requires the first message to be `'H'` + token, otherwise the connection
-  is cancelled. Subsequent frames are trusted.
+- WebSocket admission and message validation are described below; the token remains the
+  same existing unscoped token, with no new authentication scheme.
 - Public exceptions: the page shell and the CA profile, so a Home Screen bookmark can load
   before a token is entered.
 - The token is **unscoped**: it authorises every action the deck can perform.
+
+**Media resources (M2.2).** The private media queue owns all WebSocket slots, producer
+state, receive callbacks, auth timers and cleanup. At most **2 connections**, including
+pending handshakes and unauthenticated clients, are admitted before transport startup.
+Overload cancels immediately. The first complete binary application message must be
+`H` plus the exact UTF-8 token bytes, at most **256 bytes total**. Authentication must
+finish within **5 seconds of `.ready`**; control traffic never extends this absolute
+deadline. Failed auth, expiry, malformed messages, peer close, network failure and
+cancellation remove the connection slot once. Successful auth cancels its timer.
+
+Only **1 authenticated producer** may exist. Another valid authentication is rejected
+without displacing the active producer. Pending connections reserve no producer slot;
+closing the active producer releases it. A pre-ready handshake timeout and authenticated
+idle timeout remain deferred; pending clients still consume the two-connection budget.
+
+`NWProtocolWebSocket.Options.maximumMessageSize` is **2 MiB**. Only complete binary
+application messages are accepted; text, unexpected continuation data and unknown
+application types end the connection. Framework ping auto-reply stays enabled; ping/pong
+are transport control traffic and cannot authenticate. A close frame ends the connection.
+
+- `V`: at most **2 MiB minus one type byte**, with JPEG SOI/EOI envelope validation. The
+  server relays bytes without image decoding; envelope validation is not full JPEG validation.
+  Only the latest frame and its timestamp are cached; no producer-side frame queue exists.
+- `A`: at most **8 KiB payload**, with an even byte count. Empty audio creates no work.
+  Before allocating/converting PCM, `AudioQueueBudget` checks the proposed total against
+  **4000 mono frames at 16 kHz (250 ms)**. A chunk that would exceed it is dropped whole,
+  including an otherwise valid 8192-byte chunk (4096 frames). Reservations are returned
+  on allocation failure or `.dataPlayedBack`, not early buffer consumption.
 
 ## 7. Endpoint inventory
 
@@ -255,7 +307,7 @@ HIGH
 
 | Risk | Where |
 |---|---|
-| Connection count remains uncapped — **M2.2**. M2.1 resolves the pre-auth large-body buffering component with bounded headers, early admission and route body limits. | `HTTPServer.swift`; no global connection budget yet |
+| M2.1/M2.2 bound HTTP bodies, connections, media clients and buffering. Independent M2.2 review and physical validation remain pending; these are minimum bounds, not full DoS protection. | `HTTPServer.swift`, `ResourceLimits.swift`, `PhoneMedia.swift` |
 | Cleartext HTTP carries the full-control token and all commands — **M5** | `:8045` route table |
 | One unscoped token authorises every action; no expiry, scopes or audit — **M5** (M2 adds the minimum authorization boundary) | `DeckRoute.admit`, wired by `main.swift` |
 
@@ -263,12 +315,12 @@ MEDIUM
 
 | Risk | Where |
 |---|---|
-| MJPEG viewers unbounded — **M2.2**; response/stream timeout tuning remains deferred. M2.1 adds header/body bounds and absolute receive deadlines; no keep-alive is intentional. | `HTTPServer.swift`, `main.swift` viewer registry |
+| Response-send, stalled-MJPEG-send, pre-ready WS handshake and authenticated WS idle timeouts remain deferred to **M5**. Resource counts are bounded; stalled clients can still occupy the available slots. | `HTTPServer.swift`, `PhoneMedia.swift` |
 | `server.key` and `server.p12` are `0644`; PKCS#12 password hardcoded; CA downloadable unauthenticated | `TLS.swift`, `/oldphonedeck.mobileconfig` |
 | Configuration is a bare `[String]` with no version; unparseable and absent are indistinguishable | `Launcher.selected()` |
 | Frontend geometry and `APP_SLOTS` are hardcoded | `index.html` `layout`, `renderKeys` |
 | One serial queue serves both listeners; full app-directory rescan per icon/launch request | `HTTPServer.queue`, `Apps.list()` |
-| Focused M2.1 Swift Testing suite only; broader regression/CI coverage remains absent | `Tests/oldphonedeckTests`, repository |
+| Focused M2.1/M2.2 Swift Testing coverage only; hardware playback and broader regression/CI coverage remain absent | `Tests/oldphonedeckTests`, repository |
 | Accessibility key press is time-based (fixed 2 s delay + frontmost check) | `Claude.ask` |
 | TLS identity is re-issued only at startup, so an IP change degrades to HTTP-only | `LocalTLS.identity` |
 
@@ -336,22 +388,22 @@ These are structural, not bugs to fix in passing:
 2. Configuration cannot express anything except "an ordered list of app paths".
 3. No collector abstraction — `Stats` and `Music` happen to follow the same pattern, but
    `/stats` composes them by hand.
-4. M2.1 bounds HTTP parsing and moves auth before bodies; connection/resource caps and
-   the action boundary remain pending. One token still has one scope.
+4. M2.1 bounds HTTP parsing and moves auth before bodies; M2.2 bounds connection/media
+   resources. The action boundary remains pending. One token still has one scope.
 5. The frontend has no data model for controls; the layout is arithmetic.
-6. Pure parser/admission logic and HTTP lifecycle have Swift Testing coverage. Other modules
-   still lack isolated tests; there is no CI.
+6. Parser/admission, HTTP/media lifecycle, resource accounting and media bounds have Swift
+   Testing coverage. Hardware playback and other modules lack isolated tests; there is no CI.
 
 ## 13. PLANNED extension seams
 
 Approved direction (see `docs/DECISIONS.md` ADR-005 to ADR-010). Except for the
-explicitly marked M2.1 HTTP admission portion, these seams are **not implemented**.
+explicitly marked M2.1 admission and M2.2 resource portions, these seams are **not implemented**.
 
 | Seam | Milestone | Shape |
 |---|---|---|
 | **Action boundary** | M2 (foundational) | An internal representation of an approved action — identifier, display metadata, validated parameters, server-side execution allowlist. App launch, Shortcuts, developer and Git actions all become implementations of it. No arbitrary shell execution. |
 | **Versioned configuration** | M2 (foundational) | A versioned document under `~/.oldphonedeck` that can express controls, action types and metadata, with explicit migration that preserves the existing `launcher.json` selection. |
-| **Ingress / auth hardening** | M2.1 HTTP admission implemented; remaining M2 → M5 | M2.1: bounded headers/body, early query-token auth, absolute receive deadlines. Pending: connection/resource bounds and Action authorization. M5: independent T3 assessment and remaining hardening. |
+| **Ingress / auth hardening** | M2.1 admission and M2.2 resource bounds implemented; remaining M2 → M5 | Bounded headers/body, early query-token auth, receive/auth deadlines, connection/media caps and bounded frame/audio buffering. Pending: M2.2 review/physical acceptance and Action authorization. M5: independent T3 assessment and remaining hardening. |
 | **Collector boundary** | Just-in-time with M4 telemetry | Registry of collectors (each with its own queue) composed into one snapshot, so Git/agent status does not edit the route table. |
 | **Frontend data model** | M3 | Data-driven controls and widgets, layout described rather than hand-computed — while staying one ES5 file with no framework. |
 

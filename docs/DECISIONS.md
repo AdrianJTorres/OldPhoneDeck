@@ -279,3 +279,36 @@ independent Codex review (PASS, no findings) and Steering acceptance; the implem
 commit is `4dd7fae593934053b5595b01cb52735351d42e18`. Connection and media/resource caps
 belong to M2.2, the Action boundary remains pending, and the M5 independent assessment is
 still outstanding.
+
+---
+
+## ADR-014 — Explicit bounded HTTP and media ownership (M2.2)
+
+**Status:** Implementation authorized by the M2.2 Steering brief · 2026-11-03.
+Independent review, physical iPhone validation and milestone acceptance remain pending.
+
+**Context.** M2.1 bounds each HTTP request but does not cap simultaneous connections or
+media producers/viewers. The per-viewer frame-drop guard cannot prevent JPEGs from
+accumulating between the media and HTTP queues. Audio previously checked the queued total
+before adding the next chunk, allowing the intended playback bound to be exceeded.
+
+**Decision.** Use one explicit 32-slot HTTP lease budget shared by HTTP/HTTPS and returned
+idempotently from connection close. Overflow closes immediately before transport startup;
+attempting an overload response would require retaining another active connection. Keep
+two MJPEG viewers within that budget, with synchronous close removal and a receive watching
+idle streams for peer closure. Viewer overflow can safely return 503 inside an HTTP slot.
+
+The media queue owns two WebSocket slots and one producer slot, with five seconds from
+readiness for the existing first binary `H` + token. A second producer cannot replace the
+first. The framework ceiling is 2 MiB; application checks bound authentication, JPEG
+envelopes and PCM messages. Keep one latest pending frame between queues and the existing
+one-frame-in-flight viewer drop policy. Reserve proposed audio totals against 4000 frames
+before conversion; release on allocation failure or playback completion.
+
+**Consequences.** Slow clients occupy bounded slots; fairness, generalized rate limiting,
+pre-ready WS handshake deadlines, authenticated idle deadlines and stalled sends remain
+M5 work. No new authentication protocol, Action Registry, configuration schema, TLS
+lifecycle or UI is introduced. JPEG envelope checks do not decode/validate the full image.
+Whole audio chunks that exceed the remaining playback budget are dropped. Tests use
+loopback connections and a temporary memory-only TLS identity, not user configuration,
+certificates installed in a keychain, physical devices or BlackHole.

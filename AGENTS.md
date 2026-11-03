@@ -43,7 +43,8 @@ target `AdrianJTorres/OldPhoneDeck`. Do not reset it to upstream.
 | `Sources/oldphonedeck/main.swift` | Entry point, options, token, LAN address, **the route table**, listener startup |
 | `Sources/oldphonedeck/HTTPServer.swift` | Bounded HTTP transport/deadlines over `Network`, MJPEG streaming |
 | `Sources/oldphonedeck/HTTPParsing.swift` | Incremental parser and application route/admission metadata |
-| `Tests/oldphonedeckTests/` | Focused Swift Testing parser/admission/socket tests, no app startup |
+| `Sources/oldphonedeck/ResourceLimits.swift` | HTTP leases, media slots/message validation, latest-frame handoff, audio accounting |
+| `Tests/oldphonedeckTests/` | Swift Testing parsing, resource bounds, HTTP/WS/WSS/TLS lifecycle tests; no app startup |
 | `Sources/oldphonedeck/TLS.swift` | Private CA + server identity via `/usr/bin/openssl` |
 | `Sources/oldphonedeck/PhoneMedia.swift` | Camera/mic WebSocket ingest, `AVAudioEngine` playback |
 | `Sources/oldphonedeck/Control.swift` | macOS actions: app listing/launch, icons, Claude deep link, synthetic keys, launcher config |
@@ -61,7 +62,7 @@ swift build -c release          # ~105 s clean, faster incrementally
 ./.build/release/oldphonedeck   # run from the repo root (Bundle.module resolves web/)
 ```
 
-The M2.1 test target uses **Swift Testing bundled with the Swift 6.2 toolchain**, not
+The test target uses **Swift Testing bundled with the Swift 6.2 toolchain**, not
 an external package. This was explicitly authorized because the installed CLT lacks
 XCTest and its runner. With full developer tools, use `swift test`. This CLT installation
 also omits the Foundation cross-import overlay module and does not expose its Testing
@@ -89,10 +90,13 @@ they do not modify the toolchain, package dependencies, or normal release build 
 
 1. `swift build -c release` must succeed. The baseline builds with **zero warnings**;
    do not leave new warnings behind.
-2. Run `swift test` (with the CLT flags above on this Mac) for the focused M2.1 suite. There is no CI
+2. Run `swift test` (with the CLT flags above on this Mac) for the focused M2.1/M2.2 suite. There is no CI
    or broad application test suite yet. Also exercise affected endpoints against the
    actual binary where safe; keep tokens out of command output and never overwrite the
    real configuration for tests. State exactly what ran and what was observed.
+   TLS resource tests generate a temporary identity using system OpenSSL and import it
+   into memory only (macOS 15+; skipped on older systems). They never install certificates,
+   read the real token/configuration, start the application or require an audio device.
 3. Never claim a check passed that you did not run. If a step needs a physical iPhone
    or a macOS permission dialog, say so and stop there.
 
