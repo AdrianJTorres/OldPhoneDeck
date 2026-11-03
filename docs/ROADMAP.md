@@ -41,21 +41,20 @@ Exit criteria: met — documentation accepted by Steering; no `Sources/**` or
 
 **STATUS: IN PROGRESS**
 
-M2.1 — Bounded HTTP Admission is implemented on `m2.1/bounded-http-admission`, pending
-independent review and Steering acceptance. It adds bounded header/framing parsing,
-application-supplied early admission shared by HTTP/HTTPS, route body limits, absolute
-header/body deadlines, and focused Swift Testing coverage. No physical-device acceptance is
+M2.1 — Bounded HTTP Admission: **COMPLETE**, accepted by Steering. Implemented in
+`4dd7fae593934053b5595b01cb52735351d42e18` on `m2.1/bounded-http-admission`: bounded
+header/framing parsing, application-supplied early admission shared by HTTP/HTTPS, route
+body limits, absolute header/body deadlines, and focused Swift Testing coverage.
+
+Validation: independent Codex review returned **PASS** with no blockers, major findings,
+minor findings or nits; 35/35 automated tests pass; the release build passes without
+warnings; endpoint checks against the release binary passed, including HTTP/HTTPS admission
+and a launcher save/read in temporary configuration. No physical iPhone acceptance is
 claimed for this slice.
 
-Validation so far: release build passes without warnings; 28 safe endpoint checks pass
-against the actual release binary, including HTTP/HTTPS admission and a launcher save/read
-in temporary configuration. The real configuration and existing server were preserved.
-All 35 tests pass using bundled Swift Testing with the CLT-specific invocation in
-`AGENTS.md`. The user explicitly authorized replacing XCTest, which this CLT installation
-does not include. No dependency was added. Independent review remains pending.
-
-M2 is **not complete**. M2.2 resource/media caps, the Action Registry, and versioned
-configuration have not started. M5 remains the independent security/reliability review.
+M2 is **not complete**. M2.2 — Bounded Media / Resources is **NEXT** and has not started.
+The Action Registry and versioned configuration follow. M5 remains the independent
+security/reliability review.
 
 Implement only the minimum architectural foundations required for safe extensibility.
 Foundational boundaries — features must not be built ahead of them.

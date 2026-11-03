@@ -274,6 +274,8 @@ instead of XCTest because this CLT installation lacks XCTest. Its framework sear
 optional-overlay flags are documented in `AGENTS.md`; no toolchain files were changed.
 No library target, dependency or auth scheme was added.
 
-This implements the accepted direction without changing ADR-008. Connection/media caps,
-the Action boundary and the M5 independent assessment remain pending. Implementation on
-a feature branch does not imply independent review or Steering acceptance.
+This implements the accepted direction without changing ADR-008. M2.1 has since completed
+independent Codex review (PASS, no findings) and Steering acceptance; the implementation
+commit is `4dd7fae593934053b5595b01cb52735351d42e18`. Connection and media/resource caps
+belong to M2.2, the Action boundary remains pending, and the M5 independent assessment is
+still outstanding.
