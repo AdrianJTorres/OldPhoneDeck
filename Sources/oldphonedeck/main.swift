@@ -69,13 +69,15 @@ app.setActivationPolicy(.accessory)
 // MARK: Services
 
 let server: HTTPServer
-do { server = try HTTPServer(port: opts.port) } catch { print("Cannot listen on \(opts.port): \(error)"); exit(1) }
+let httpBudget = HTTPConnectionBudget()
+do { server = try HTTPServer(port: opts.port, budget: httpBudget) } catch { print("Cannot listen on \(opts.port): \(error)"); exit(1) }
 
 // Camera + mic from a modern iPhone (browser, over the secure WebSocket).
-var cameraViewers: [ObjectIdentifier: HTTPConnection] = [:]   // touched only on server.queue
+let cameraViewers = MJPEGViewers() // touched only on server.queue
+let frameHandoff = LatestFrameHandoff(queue: server.queue) { cameraViewers.pushFrame($0) }
 let phoneMedia = PhoneMediaServer(token: token, audio: AudioOut(deviceMatch: opts.micDevice))
 phoneMedia.onFrame = { jpeg in
-    server.queue.async { for v in cameraViewers.values { v.pushFrame(jpeg) } }
+    frameHandoff.submit(jpeg)
 }
 
 let stats = Stats()
@@ -161,11 +163,7 @@ let routes: (HTTPRequest, HTTPConnection) -> Void = { req, conn in
         }
         conn.respond(text: "ok")
     case .cameraStream:
-        let id = ObjectIdentifier(conn)
-        conn.onClose = { server.queue.async { cameraViewers[id] = nil } }
-        cameraViewers[id] = conn
-        conn.beginMJPEG()
-        if let last = phoneMedia.latestFrame { conn.pushFrame(last) }
+        cameraViewers.add(conn, latest: phoneMedia.latestFrame)
     case .cameraFrame:
         conn.respond(200, "image/jpeg", phoneMedia.latestFrame ?? Data())
     }
@@ -177,7 +175,8 @@ let lanIP = lanAddress()
 var httpsServer: HTTPServer?
 if let identity = LocalTLS.identity(for: lanIP) {
     do {
-        let s = try HTTPServer(port: opts.port + 2, parameters: LocalTLS.parameters(identity), queue: server.queue)
+        let s = try HTTPServer(port: opts.port + 2, parameters: LocalTLS.parameters(identity), queue: server.queue,
+                               budget: httpBudget)
         s.start(admission: admission, routes)
         httpsServer = s
         try phoneMedia.startWebSocket(port: opts.port + 3, identity: identity)
