@@ -44,7 +44,8 @@ target `AdrianJTorres/OldPhoneDeck`. Do not reset it to upstream.
 | `Sources/oldphonedeck/HTTPServer.swift` | Bounded HTTP transport/deadlines over `Network`, MJPEG streaming |
 | `Sources/oldphonedeck/HTTPParsing.swift` | Incremental parser and application route/admission metadata |
 | `Sources/oldphonedeck/ResourceLimits.swift` | HTTP leases, media slots/message validation, latest-frame handoff, audio accounting |
-| `Tests/oldphonedeckTests/` | Swift Testing parsing, resource bounds, HTTP/WS/WSS/TLS lifecycle tests; no app startup |
+| `Sources/oldphonedeck/ActionRegistry.swift` | Approved-action boundary: action ids, server-authored metadata, typed parameters, authorization, controlled executor, `POST /launch` adapter |
+| `Tests/oldphonedeckTests/` | Swift Testing parsing, resource bounds, action-boundary, HTTP/WS/WSS/TLS lifecycle tests; no app startup |
 | `Sources/oldphonedeck/TLS.swift` | Private CA + server identity via `/usr/bin/openssl` |
 | `Sources/oldphonedeck/PhoneMedia.swift` | Camera/mic WebSocket ingest, `AVAudioEngine` playback |
 | `Sources/oldphonedeck/Control.swift` | macOS actions: app listing/launch, icons, Claude deep link, synthetic keys, launcher config |
@@ -90,13 +91,17 @@ they do not modify the toolchain, package dependencies, or normal release build 
 
 1. `swift build -c release` must succeed. The baseline builds with **zero warnings**;
    do not leave new warnings behind.
-2. Run `swift test` (with the CLT flags above on this Mac) for the focused M2.1/M2.2 suite. There is no CI
+2. Run `swift test` (with the CLT flags above on this Mac) for the focused M2.1–M2.3 suite. There is no CI
    or broad application test suite yet. Also exercise affected endpoints against the
    actual binary where safe; keep tokens out of command output and never overwrite the
    real configuration for tests. State exactly what ran and what was observed.
    TLS resource tests generate a temporary identity using system OpenSSL and import it
    into memory only (macOS 15+; skipped on older systems). They never install certificates,
    read the real token/configuration, start the application or require an audio device.
+   Action-boundary tests inject a fake app catalog and a recording executor, so they never
+   call NSWorkspace, open an application or need GUI automation; the single check that
+   builds the production registry performs a read-only scan of the application directories
+   and uses only paths that cannot be an application bundle.
 3. Never claim a check passed that you did not run. If a step needs a physical iPhone
    or a macOS permission dialog, say so and stop there.
 
@@ -134,9 +139,15 @@ Rules that always apply to **product code**:
   command, a binary path, or a script and run it. Not even behind the token, not even
   "temporarily".
 - **Every action is allowlisted.** The server decides what can be executed; the client
-  only identifies which approved action to invoke. `Apps.isKnown` (`Control.swift`) is
-  the reference pattern: validate against a server-side list, never trust the client's
-  string.
+  only identifies which approved action to invoke. That decision now lives in one place:
+  `ActionRegistry` (`ActionRegistry.swift`, M2.3 — implemented, pending independent review
+  and Steering acceptance) resolves a server-authored action id, validates typed
+  parameters and authorizes against server-side state before a controlled executor runs.
+  `Apps.isKnown` (`Control.swift`) remains the reference validation pattern and is what the
+  registry consults for app launch; never trust the client's string. App launch is the
+  **only** migrated capability — every other route is still legacy and must not be assumed
+  to go through the registry. New action-shaped capabilities go through the registry rather
+  than adding an ad-hoc endpoint.
 - **Validate inputs against server-side state**, not against client-supplied metadata.
 - **Keep the token out of logs, diagnostics and error messages.**
 - **Security findings are owned by milestones, not fixed opportunistically.** M2 fixes the

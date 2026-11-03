@@ -315,3 +315,64 @@ lifecycle or UI is introduced. JPEG envelope checks do not decode/validate the f
 Whole audio chunks that exceed the remaining playback budget are dropped. Tests use
 loopback connections and a temporary memory-only TLS identity, not user configuration,
 certificates installed in a keychain, physical devices or BlackHole.
+
+---
+
+## Implementation note — ADR-005 / ADR-006 / M2.3
+
+**Status:** Implemented on `m2.3/app-action-boundary`. **Pending independent review and
+Steering acceptance** — not accepted, not merged. M2 as a whole remains IN PROGRESS.
+
+M2.3 implements the first slice of ADR-006 without changing ADR-005 or ADR-006, and
+without touching ADR-007 (versioned configuration is a later slice).
+
+**What now exists.** One internal typed action boundary in `Sources/oldphonedeck/ActionRegistry.swift`,
+inside the existing single executable target: no new module, no dependency, no framework.
+`ActionID` validates identifier syntax (lowercase dotted name, at most 64 bytes) and the
+identifier must also name an entry in a server-authored descriptor table, so an unknown or
+malformed identifier fails closed and there is no registration entry point a client could
+reach. `ActionDescriptor` carries a display name and a kind; metadata describes an action,
+never authorizes one, and is not persisted. `ActionParameters` can only carry an application
+path. `ActionRegistry.dispatch` re-validates parameters (non-empty, at most 4096 UTF-8
+bytes) and then requires exact membership in the catalog the server itself produced, before
+`AppLaunchExecutor` runs. Every rejection returns before the executor is reached.
+
+**ADR-005 is preserved strictly.** An application path is data: no parameter shape can
+express a command, argv element, shell source, environment variable, working directory,
+script or process descriptor. No `Process`, no shell-out and no generic command runner is
+added. The only execution remains the existing `NSWorkspace` app launch, reached only after
+server-side authorization, with the pre-existing `DispatchQueue.main.async` hand-off to
+`Apps.launch` intact. A `.app` suffix, a plausible directory or a matching display name
+authorizes nothing.
+
+**Authorization moved inside the boundary**, out of the HTTP route, so a future caller that
+reaches the registry directly is still authorized. `POST /launch` became a thin adapter:
+the server names `app.launch`, the client supplies only data, and no client-supplied
+identifier is decoded. Wire compatibility is unchanged — same method, path, parameters,
+`200 ok` for an accepted launch, `404 unknown app` for every rejection, and the existing
+`403`/`405`/`411`/`413` admission behaviour. `ok` still acknowledges acceptance and
+dispatch, not activation. No new endpoint, no new route, no action permissions or token
+scopes, no persistence, no configuration schema, no plugin loader and no UI change.
+`/media`, `/claude`, `/speedtest`, `/launcher` and `/icon` remain legacy and are not
+migrated; Shortcuts, Git and developer actions are not created.
+
+**Testability.** The catalog resolver and the execution callback are injected, so tests use
+a deterministic fake catalog and a recording executor and never call NSWorkspace, need GUI
+automation or Accessibility permission, or require a physical device.
+
+**Known limitations.** Exactly one action is registered, so the boundary is proven with a
+single capability rather than a general framework; adding an action is a deliberate code
+change, not configuration. Path comparison stays exact string membership with no
+normalization, matching pre-M2.3 behaviour, so symlinked or traversal-spelled variants of
+an approved path are rejected rather than resolved. Each dispatch re-runs the existing
+application-directory scan (`Apps.list()`), an unchanged cost. Rejection reasons are
+distinguished internally but collapse to one `404` on the wire for compatibility. Metadata
+is not exposed to the client and not persisted.
+
+**Evidence.** 89 Swift Testing tests pass (63 retained M2.1/M2.2 plus 26 new, of which four
+are parameterized into 44 cases); `swift build -c release` succeeds with no new warnings;
+the release binary was exercised on isolated ports with rejection paths only, so no
+application was launched and the real configuration was not written. Four mutations —
+removing the catalog gate, removing parameter validation, removing the main-queue dispatch,
+and letting unknown identifiers fall back to the registered action — each turned the
+relevant tests red and were reverted.

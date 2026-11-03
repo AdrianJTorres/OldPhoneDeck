@@ -73,7 +73,35 @@ checks. Real HTTPS/WSS use a temporary identity imported only into memory; no us
 configuration, keychain certificates or audio hardware are touched. Tests do not start
 the full app.
 
-M2 is **not complete**. The Action Registry and versioned configuration have not started.
+M2.3 — App Action Boundary: **IN PROGRESS** — implemented on `m2.3/app-action-boundary`
+(`8097c28` implementation, `009e02d` test hardening), **pending independent review and
+Steering acceptance**. Adds `Sources/oldphonedeck/ActionRegistry.swift`: a typed,
+server-authoritative action boundary with a validated identifier, server-authored display
+metadata, typed parameters, authorization inside the boundary and a controlled executor.
+`app.launch` is the only registered action and unknown or malformed identifiers fail closed.
+`POST /launch` is now a thin adapter that keeps its exact wire behaviour — `200 ok`,
+`404 unknown app`, and the existing `403`/`405`/`411`/`413` admission — with `ok` still
+meaning accepted-and-dispatched rather than activated. No new endpoint, no persistence, no
+configuration schema, no token scope, no plugin loader and no UI change; `/media`,
+`/claude`, `/speedtest`, `/launcher` and `/icon` remain legacy and are not migrated.
+
+Validation: all **89 Swift Testing tests** pass (the 63 retained M2.1/M2.2 tests plus 26
+new ones, four of them parameterized into 44 cases), covering action identity, parameters,
+authorization, execution and `POST /launch` HTTP compatibility against a real loopback
+listener. Tests inject a fake app catalog and a recording executor, so they never call
+NSWorkspace or open an application. `swift build -c release` passes with no new warnings.
+The release binary was exercised on isolated ports (8065/8067/8068) with rejection paths
+only, so nothing launched, the two running personal instances were untouched and the real
+configuration was not written. Four gate mutations — removing the catalog authorization,
+removing parameter validation, removing the main-queue dispatch, and letting unknown
+identifiers fall back to the registered action — were each observed to fail the relevant
+tests and were reverted. No physical iPhone acceptance is claimed for this slice.
+
+M2.4 — Configuration V1 codec: **NOT STARTED** and not mandated by M2.3. It is the next
+candidate slice under ADR-007 and begins only on an explicit Steering brief.
+
+M2 is **not complete**. The Action Registry now exists for app launch (M2.3, pending
+review); versioned configuration has not started.
 M5 remains the independent security/reliability review. Physical iPhone 11 checks passed
 for WSS streaming, camera frames reaching the Mac, fresh-frame delivery, front/back
 switching, reconnection and deck polling. Continuous live MJPEG was not confirmed on
