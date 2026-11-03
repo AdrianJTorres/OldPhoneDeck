@@ -237,14 +237,16 @@ struct ActionAuthorizationTests {
 
     @Test func productionWiringFailsClosed() throws {
         // The default initializer wires the real catalog (`Apps.isKnown`) and the real
-        // main-queue executor. Every path below is one that cannot appear in an application
-        // catalog, so this test cannot open an application.
+        // main-queue executor. Every path below is one that cannot be an application bundle,
+        // so this test cannot open an application even if a gate inside the boundary
+        // regressed — a regression has to fail an expectation, not launch something.
         let registry = ActionRegistry()
-        for path in ["", "/bin/sh", "/etc/passwd", "/Applications/Safari.app ", "/tmp/evil.app", "app.launch"] {
+        for path in ["", "/bin/sh", "/etc/hosts", "/etc/passwd", "/Applications/Safari.app ", "app.launch"] {
             #expect(registry.dispatch(.appLaunch, parameters: .appPath(path)) != .dispatched)
         }
+        // An unregistered identifier must not resolve to the registered action.
         let unregistered = try #require(ActionID(rawValue: "app.quit"))
-        #expect(registry.dispatch(unregistered, parameters: .appPath("/Applications/Safari.app")) == .unknownAction)
+        #expect(registry.dispatch(unregistered, parameters: .appPath("/bin/sh")) == .unknownAction)
         #expect(registry.descriptor(for: .appLaunch) != nil)
     }
 }
