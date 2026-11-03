@@ -256,3 +256,24 @@ authentication, physical-device checks on the iPhone, and scope or architecture 
 
 **Consequences.** Agents must show real command output rather than instructing the user,
 and must state clearly when a step genuinely needs the human.
+
+---
+
+## Implementation note — ADR-008 / M2.1
+
+M2.1 implements only the HTTP admission portion of ADR-008. Bounded incremental parsing
+produces headers for an application-supplied admission closure; the transport does not
+know the token. `DeckRoute` is the single method/path/body-limit catalog used by admission
+and the handler switch, shared by HTTP and HTTPS. Bodies are retained only after admission.
+
+Header and admitted-body absolute deadlines are each 10 seconds; expiry cancels the
+connection. Their exact limits and error behavior are recorded in `ARCHITECTURE.md` §5.
+One Swift Testing target tests parsing/admission and real local HTTP connections without app
+startup or user configuration. The user explicitly authorized bundled Swift Testing
+instead of XCTest because this CLT installation lacks XCTest. Its framework search and
+optional-overlay flags are documented in `AGENTS.md`; no toolchain files were changed.
+No library target, dependency or auth scheme was added.
+
+This implements the accepted direction without changing ADR-008. Connection/media caps,
+the Action boundary and the M5 independent assessment remain pending. Implementation on
+a feature branch does not imply independent review or Steering acceptance.

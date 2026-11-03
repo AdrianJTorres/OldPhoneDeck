@@ -87,9 +87,18 @@ music.start()
 
 let webRoot = Bundle.module.url(forResource: "web", withExtension: nil)!
 
+// One application policy is supplied to both HTTP transports. The transport has no token knowledge.
+let admission: HTTPAdmission = { DeckRoute.admit($0, token: token) }
 let routes: (HTTPRequest, HTTPConnection) -> Void = { req, conn in
-    // Public: the page shell (so a home-screen bookmark loads) and the local CA as an iOS profile.
-    if req.path == "/oldphonedeck.mobileconfig" {
+    guard let route = DeckRoute.match(method: req.method, path: req.path) else {
+        return conn.respond(404, text: "not found")
+    }
+    if let failure = DeckRoute.validateParameters(req) {
+        return conn.respond(failure.status, text: failure.message)
+    }
+    let p = req.params
+    switch route {
+    case .profile:
         guard let der = try? Data(contentsOf: LocalTLS.caDER) else { return conn.respond(404, text: "no certificate yet") }
         let cert: [String: Any] = [
             "PayloadType": "com.apple.security.root", "PayloadVersion": 1,
@@ -105,70 +114,63 @@ let routes: (HTTPRequest, HTTPConnection) -> Void = { req, conn in
         ]
         let data = (try? PropertyListSerialization.data(fromPropertyList: profile, format: .xml, options: 0)) ?? Data()
         return conn.respond(200, "application/x-apple-aspen-config", data)
-    }
-    if req.path == "/" || req.path == "/index.html" {
+    case .page, .index:
         let html = (try? Data(contentsOf: webRoot.appendingPathComponent("index.html"))) ?? Data()
         return conn.respond(200, "text/html; charset=utf-8", html)
-    }
-    guard req.query["k"] == token else { return conn.respond(403, text: "bad token") }
-    let p = req.params
 
-    switch (req.method, req.path) {
-    case ("GET", "/info"):
+    case .info:
         conn.respondJSON(["camera": phoneMedia.isLive])
-    case ("GET", "/stats"):
+    case .stats:
         var snap = stats.snapshot()
         snap["music"] = music.snapshot()
         conn.respondJSON(snap)
-    case ("POST", "/speedtest"):
+    case .speedtest:
         stats.runSpeedTest()
         conn.respond(text: "ok")
-    case ("POST", "/media"):
+    case .media:
         let cmd = p["cmd"] ?? ""
         if cmd == "open" { DispatchQueue.global().async { music.openPlayer() } } else { music.control(cmd) }
         conn.respond(text: "ok")
-    case ("GET", "/artwork"):
+    case .artwork:
         guard let art = music.artwork() else { return conn.respond(404, text: "no artwork") }
         conn.respond(200, "image/jpeg", art)
-    case ("GET", "/launcher"):
+    case .launcherRead:
         let selected: Any = Launcher.selected() ?? NSNull()
         conn.respondJSON(["selected": selected, "all": Apps.list()])
-    case ("POST", "/launcher"):
+    case .launcherSave:
         // Body: paths=<path>\n<path>\n… in display order.
         let paths = (p["paths"] ?? "").split(separator: "\n").map(String.init)
         do { conn.respondJSON(["saved": try Launcher.save(paths)]) }
         catch { conn.respond(500, text: error.localizedDescription) }
-    case ("GET", "/icon"):
+    case .icon:
         let path = p["path"] ?? ""
         guard Apps.isKnown(path) else { return conn.respond(404, text: "unknown app") }
         DispatchQueue.main.async {
             let png = Apps.icon(path) ?? Data()
             server.queue.async { conn.respond(200, "image/png", png) }
         }
-    case ("POST", "/launch"):
+    case .launch:
         let path = p["path"] ?? ""
         guard Apps.isKnown(path) else { return conn.respond(404, text: "unknown app") }
         DispatchQueue.main.async { Apps.launch(path) }
         conn.respond(text: "ok")
-    case ("POST", "/claude"):
+    case .claude:
         let text = (p["text"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         DispatchQueue.main.async {
             if text.isEmpty { Claude.focus() } else { Claude.ask(text, autoSend: p["send"] == "1") }
         }
         conn.respond(text: "ok")
-    case ("GET", "/camera.mjpg"):
+    case .cameraStream:
         let id = ObjectIdentifier(conn)
         conn.onClose = { server.queue.async { cameraViewers[id] = nil } }
         cameraViewers[id] = conn
         conn.beginMJPEG()
         if let last = phoneMedia.latestFrame { conn.pushFrame(last) }
-    case ("GET", "/camera.jpg"):
+    case .cameraFrame:
         conn.respond(200, "image/jpeg", phoneMedia.latestFrame ?? Data())
-    default:
-        conn.respond(404, text: "not found")
     }
 }
-server.start(routes)
+server.start(admission: admission, routes)
 
 // HTTPS + secure WebSocket for modern iPhones (Safari needs a secure page for camera, mic and speech).
 let lanIP = lanAddress()
@@ -176,7 +178,7 @@ var httpsServer: HTTPServer?
 if let identity = LocalTLS.identity(for: lanIP) {
     do {
         let s = try HTTPServer(port: opts.port + 2, parameters: LocalTLS.parameters(identity), queue: server.queue)
-        s.start(routes)
+        s.start(admission: admission, routes)
         httpsServer = s
         try phoneMedia.startWebSocket(port: opts.port + 3, identity: identity)
     } catch { print("⚠️  HTTPS failed to start: \(error)") }

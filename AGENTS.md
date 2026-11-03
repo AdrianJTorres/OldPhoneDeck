@@ -39,9 +39,11 @@ target `AdrianJTorres/OldPhoneDeck`. Do not reset it to upstream.
 
 | Path | Contents |
 |---|---|
-| `Package.swift` | Single executable target `oldphonedeck`, `resources: [.copy("web")]`, links AppKit |
+| `Package.swift` | Executable `oldphonedeck` plus Swift Testing target, `resources: [.copy("web")]`, links AppKit |
 | `Sources/oldphonedeck/main.swift` | Entry point, options, token, LAN address, **the route table**, listener startup |
-| `Sources/oldphonedeck/HTTPServer.swift` | Minimal HTTP/1.1 transport over `Network`, MJPEG streaming |
+| `Sources/oldphonedeck/HTTPServer.swift` | Bounded HTTP transport/deadlines over `Network`, MJPEG streaming |
+| `Sources/oldphonedeck/HTTPParsing.swift` | Incremental parser and application route/admission metadata |
+| `Tests/oldphonedeckTests/` | Focused Swift Testing parser/admission/socket tests, no app startup |
 | `Sources/oldphonedeck/TLS.swift` | Private CA + server identity via `/usr/bin/openssl` |
 | `Sources/oldphonedeck/PhoneMedia.swift` | Camera/mic WebSocket ingest, `AVAudioEngine` playback |
 | `Sources/oldphonedeck/Control.swift` | macOS actions: app listing/launch, icons, Claude deep link, synthetic keys, launcher config |
@@ -59,6 +61,24 @@ swift build -c release          # ~105 s clean, faster incrementally
 ./.build/release/oldphonedeck   # run from the repo root (Bundle.module resolves web/)
 ```
 
+The M2.1 test target uses **Swift Testing bundled with the Swift 6.2 toolchain**, not
+an external package. This was explicitly authorized because the installed CLT lacks
+XCTest and its runner. With full developer tools, use `swift test`. This CLT installation
+also omits the Foundation cross-import overlay module and does not expose its Testing
+framework to SwiftPM automatically; use the following test-only invocation:
+
+```bash
+PD_TEST_FRAMEWORKS="$(xcode-select -p)/Library/Developer/Frameworks"
+swift test --disable-xctest \
+  -Xswiftc -F -Xswiftc "$PD_TEST_FRAMEWORKS" \
+  -Xswiftc -Xfrontend -Xswiftc -disable-cross-import-overlays \
+  -Xlinker -F -Xlinker "$PD_TEST_FRAMEWORKS" \
+  -Xlinker -rpath -Xlinker "$PD_TEST_FRAMEWORKS"
+```
+
+These flags select the existing framework and omit its optional Foundation integration;
+they do not modify the toolchain, package dependencies, or normal release build settings.
+
 - The binary serves HTTP on `8045`, HTTPS on `8047`, secure WebSocket on `8048`.
 - **Do not** treat a missing full Xcode as a blocker. This Mac has only the Command
   Line Tools, so `xcodebuild` fails by design; the project is SwiftPM-only.
@@ -69,9 +89,10 @@ swift build -c release          # ~105 s clean, faster incrementally
 
 1. `swift build -c release` must succeed. The baseline builds with **zero warnings**;
    do not leave new warnings behind.
-2. There is currently **no test suite and no CI**. Until that changes, verify behaviour
-   by running the binary and exercising the affected endpoints (`curl` with the token
-   from `~/.oldphonedeck/token`), then state exactly what you ran and what you saw.
+2. Run `swift test` (with the CLT flags above on this Mac) for the focused M2.1 suite. There is no CI
+   or broad application test suite yet. Also exercise affected endpoints against the
+   actual binary where safe; keep tokens out of command output and never overwrite the
+   real configuration for tests. State exactly what ran and what was observed.
 3. Never claim a check passed that you did not run. If a step needs a physical iPhone
    or a macOS permission dialog, say so and stop there.
 

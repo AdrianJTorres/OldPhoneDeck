@@ -1,12 +1,12 @@
-# ARCHITECTURE.md — PhoneDeck (OldPhoneDeck baseline)
+# ARCHITECTURE.md — PhoneDeck
 
-Architecture reference for coding agents. Describes **what the code does today** at
-baseline `e622184`, then what is **planned**. Planned items are labelled PLANNED and are
-not implemented.
+Architecture reference for coding agents. Describes **current behavior**, including
+M2.1 bounded HTTP admission, and explicitly labelled **planned** extension seams.
+The upstream baseline is `e622184`; M2.1 is not completion of M2 or the M5 review.
 
-- Current behavior: §1–§10
-- Known limitations: §10
-- Planned extension seams: §11
+- Current behavior: §1–§8, §10–§11
+- Known limitations: §12
+- Planned extension seams: §13
 - Risks: §9
 
 Source of truth is the code. If this document and the code disagree, the code is right —
@@ -59,7 +59,8 @@ order and then blocks in `NSApplication.run()`:
 5. `PhoneMediaServer` + `AudioOut` are constructed; `AudioOut` may return `nil` if no
    matching audio device exists (warns, continues without mic playback).
 6. `Stats().start()` and `Music().start()` begin their timers.
-7. The `routes` closure is defined and handed to `server.start(_:)`.
+7. One application admission closure and the `routes` handler are handed to
+   `server.start(admission:_:)`; HTTPS receives the same policy and handler.
 8. `LocalTLS.identity(for:)` generates or loads the TLS identity; on success the HTTPS
    listener (`port + 2`) and the secure WebSocket listener (`port + 3`) start. **Failure
    is non-fatal** — the process continues HTTP-only with a printed warning.
@@ -73,9 +74,11 @@ binary, stop it with Ctrl-C.
 
 | File | Lines | Responsibility | Key types / functions |
 |---|---|---|---|
-| `Package.swift` | 15 | Executable target, copies `web/`, links AppKit | — |
-| `main.swift` | 208 | Options, token, LAN address, **route table**, listener startup, boot printout | `Options`, `loadToken`, `lanAddress`, `routes` |
-| `HTTPServer.swift` | 137 | HTTP/1.1 parsing, one request per connection, responses, MJPEG | `HTTPRequest`, `HTTPConnection`, `HTTPServer` |
+| `Package.swift` | — | One executable plus a Swift Testing target; copies `web/`, links AppKit | — |
+| `main.swift` | — | Options, token, LAN address, application admission/route wiring, startup | `Options`, `loadToken`, `lanAddress`, `admission`, `routes` |
+| `HTTPServer.swift` | — | Bounded receive/deadlines, one request per connection, responses, MJPEG | `HTTPConnection`, `HTTPServer` |
+| `HTTPParsing.swift` | — | Incremental framing; application route metadata and admission | `HTTPRequestParser`, `HTTPRequestHead`, `HTTPRequest`, `HTTPFailure`, `DeckRoute` |
+| `Tests/oldphonedeckTests/` | — | Swift Testing parser/admission and local socket tests; no app startup | `HTTPParsingTests`, `HTTPConnectionTests` |
 | `TLS.swift` | 109 | Private CA, server cert, PKCS#12 identity, TLS/WS parameters | `LocalTLS.identity/makeCA/makeServerCert/loadIdentity/parameters` |
 | `PhoneMedia.swift` | 153 | WSS ingest of camera/mic, latest-frame cache, audio playback | `PhoneMediaServer`, `AudioOut` |
 | `Control.swift` | 116 | App enumeration/icons/launch, launcher config, Claude deep link, synthetic keys | `Input`, `Apps`, `Launcher`, `Claude` |
@@ -83,8 +86,9 @@ binary, stop it with Ctrl-C.
 | `Stats.swift` | 166 | Net throughput, speed test, batteries, `Process` helper | `Stats` |
 | `web/index.html` | 797 | Entire UI: inline CSS, ES5 IIFE, layout, polling, WS client | `fit`, `layout`, `renderKeys`, `pollStats`, `wsOpen` |
 
-Module boundaries are **files, not SPM targets**: there is one target, so everything is
-internal and mutually visible. Treat the file split as the intended boundary anyway —
+Production module boundaries are **files, not separate library targets**: there is one
+executable target and a dependent Swift Testing target; production types remain internal.
+Treat the file split as the intended boundary anyway —
 `HTTPServer` does not know about apps, `Music` does not know about HTTP.
 
 ## 4. Ports
@@ -100,21 +104,54 @@ Clients derive the ports from the page they loaded: `https = port + 2`,
 
 ## 5. Request flow
 
-**Ingress.** `NWListener` → `newConnectionHandler` → `HTTPConnection.start` →
-`receive` loop (1 MiB reads) → `parse()` waits for `\r\n\r\n` **and** `Content-Length`
-bytes → `handler(request, connection)` on the shared `"http"` queue.
+**Ingress (M2.1).** `NWListener` → `HTTPConnection.start` → bounded incremental
+headers/framing → application-supplied admission → bounded body → handler. Header-phase
+reads are at most 4 KiB and never exceed the remaining 16 KiB header allowance; admitted
+body reads are at most 16 KiB and never exceed the remaining declared length. Coalesced
+body bytes in the small header read are not retained until admission succeeds.
 
-**Egress.** `respond()` writes status line + headers (`Cache-Control: no-store`,
-`Connection: close`) + body, then cancels the connection. One request per connection, no
-keep-alive.
+`HTTPServer` has no token knowledge. `DeckRoute` declares the supported method/path
+pairs, public routes and body limits; `main.swift` uses that same enum in its exhaustive
+handler switch. Both HTTP and HTTPS use `DeckRoute.admit` with the existing token.
 
-**Route order** (`main.swift`, `routes` closure):
+Admission order:
 
-1. `/oldphonedeck.mobileconfig` — public, any method: serves the CA as an iOS profile.
-2. `/` and `/index.html` — public, any method: serves `web/index.html` from the bundle.
-3. **Auth guard:** `query["k"] == token`, else `403`. The token is accepted **only** as a
-   query parameter; a token in a POST body is rejected.
-4. `switch (method, path)` — 13 cases, default `404`.
+1. Validate syntax and framing, including strict Content-Length, no Transfer-Encoding,
+   and no Expect. Reject duplicate Content-Length, Content-Type or Host fields and
+   duplicate decoded `k` query parameters.
+2. Unknown path → `404`, with no body allowance.
+3. Known protected path: query token must match, otherwise `403`, before body collection.
+   A body token cannot authenticate or override this decision.
+4. Unsupported method on a known public/authenticated path → `405`.
+5. Body-bearing POSTs require Content-Length (`411`); excessive declared lengths → `413`.
+6. Collect exactly the declared admitted body. Incomplete requests never invoke handlers.
+   Decoded launch/Claude parameter checks run before their side effects.
+
+**Limits:** request line 4 KiB (excluding CRLF), total headers 16 KiB (including request
+line and CRLFCRLF), 64 header fields, individual header line 4 KiB (excluding CRLF).
+Oversized request lines/targets return `414`, header bounds `431`, malformed framing
+`400`, unsupported Expect `417`. Content-Length must be a single unsigned decimal
+integer representable as Int; duplicate, signed, malformed and overflow values fail.
+
+| Route | Maximum wire request body |
+|---|---:|
+| All supported GETs; POST `/speedtest` | 0 |
+| POST `/media` | 1 KiB |
+| POST `/launch` | 16 KiB; decoded path ≤4096 UTF-8 bytes |
+| POST `/claude` | 64 KiB; decoded text ≤16 KiB; send absent, `0` or `1` |
+| POST `/launcher` | 64 KiB |
+
+The header absolute deadline is 10 seconds from connection acceptance, including TLS
+setup. After headers are admitted, an incomplete body gets a fresh absolute 10 seconds.
+Neither timer is extended by incoming bytes. Deadline expiry cancels the connection
+without waiting for an error response to send. Timers stop before the normal handler;
+response-send and stream timeouts remain deferred. Timers execute on the existing serial
+HTTP queue, so queue stalls can delay cancellation; this is not a comprehensive DoS bound.
+
+**Egress.** `respond()` writes a standard status reason, headers (`Cache-Control:
+no-store`, `Connection: close`) and body, then cancels. One request per connection; no
+keep-alive, chunk decoding or pipelining. Coalesced bytes beyond the declared body are
+rejected; bytes arriving after dispatch are never interpreted as another request.
 
 **Traces.**
 
@@ -136,7 +173,8 @@ keep-alive.
 - The deck URL carries `#k=<token>` in the **fragment**, which the browser does not send
   to the server; the client copies it to `localStorage` and appends `?k=<token>` to every
   API request.
-- Every API request is checked by a single string comparison against the token.
+- Every known protected API path is checked during header admission by a single
+  string comparison against the query token, before body accumulation.
 - The WebSocket requires the first message to be `'H'` + token, otherwise the connection
   is cancelled. Subsequent frames are trusted.
 - Public exceptions: the page shell and the CA profile, so a Home Screen bookmark can load
@@ -145,12 +183,13 @@ keep-alive.
 
 ## 7. Endpoint inventory
 
-`Auth` = `?k=<token>` required. Public routes ignore the method.
+`Auth` = `?k=<token>` required. Public resources accept GET only; request body limits
+apply before handlers (see §5).
 
 | Method | Path | Auth | Purpose | Input | Output | Side effects |
 |---|---|---|---|---|---|---|
-| any | `/oldphonedeck.mobileconfig` | — | iOS profile containing the CA | — | plist (`application/x-apple-aspen-config`) | none |
-| any | `/`, `/index.html` | — | Page shell | — | HTML (45,587 B) | bundle read |
+| GET | `/oldphonedeck.mobileconfig` | — | iOS profile containing the CA | — | plist (`application/x-apple-aspen-config`) | none |
+| GET | `/`, `/index.html` | — | Page shell | — | HTML (45,587 B) | bundle read |
 | GET | `/info` | yes | Liveness / camera status | — | `{camera: bool}` | none |
 | GET | `/stats` | yes | All widget data | — | `{net, speed, batteries, mac, music}` | none (blocks the HTTP queue briefly) |
 | POST | `/speedtest` | yes | Run a speed test | — | `ok` | spawns `networkQuality` (~20 s) |
@@ -216,26 +255,27 @@ HIGH
 
 | Risk | Where |
 |---|---|
-| Request body buffered (up to 512 MB) **before** authentication, no connection cap — **M2** | `HTTPServer.swift` `maxBody`, `receive`; guard in `main.swift` |
+| Connection count remains uncapped — **M2.2**. M2.1 resolves the pre-auth large-body buffering component with bounded headers, early admission and route body limits. | `HTTPServer.swift`; no global connection budget yet |
 | Cleartext HTTP carries the full-control token and all commands — **M5** | `:8045` route table |
-| One unscoped token authorises every action; no expiry, scopes or audit — **M5** (M2 adds the minimum authorization boundary) | `main.swift` auth guard |
+| One unscoped token authorises every action; no expiry, scopes or audit — **M5** (M2 adds the minimum authorization boundary) | `DeckRoute.admit`, wired by `main.swift` |
 
 MEDIUM
 
 | Risk | Where |
 |---|---|
-| No header/request/idle limits, no keep-alive; MJPEG viewers unbounded — **M2** | `HTTPServer.swift`, `main.swift` viewer registry |
+| MJPEG viewers unbounded — **M2.2**; response/stream timeout tuning remains deferred. M2.1 adds header/body bounds and absolute receive deadlines; no keep-alive is intentional. | `HTTPServer.swift`, `main.swift` viewer registry |
 | `server.key` and `server.p12` are `0644`; PKCS#12 password hardcoded; CA downloadable unauthenticated | `TLS.swift`, `/oldphonedeck.mobileconfig` |
 | Configuration is a bare `[String]` with no version; unparseable and absent are indistinguishable | `Launcher.selected()` |
 | Frontend geometry and `APP_SLOTS` are hardcoded | `index.html` `layout`, `renderKeys` |
 | One serial queue serves both listeners; full app-directory rescan per icon/launch request | `HTTPServer.queue`, `Apps.list()` |
-| No tests, no CI, no `.gitignore` | repository |
+| Focused M2.1 Swift Testing suite only; broader regression/CI coverage remains absent | `Tests/oldphonedeckTests`, repository |
 | Accessibility key press is time-based (fixed 2 s delay + frontmost check) | `Claude.ask` |
 | TLS identity is re-issued only at startup, so an IP change degrades to HTTP-only | `LocalTLS.identity` |
 
 Lower-severity findings (non-constant-time token comparison, `try?` swallowing token write
 failures, AppleScript string interpolation, predictable temp artwork path, incomplete
-status-reason map, no auth logging, no Origin checks, Swift 5 concurrency annotations)
+status-reason map (statuses used by M2.1 are now covered), no auth logging, no Origin
+checks, Swift 5 concurrency annotations)
 are documented in the M1 analysis and remain open.
 
 ## 10. Local persistence and files outside the repo
@@ -296,21 +336,22 @@ These are structural, not bugs to fix in passing:
 2. Configuration cannot express anything except "an ordered list of app paths".
 3. No collector abstraction — `Stats` and `Music` happen to follow the same pattern, but
    `/stats` composes them by hand.
-4. Ingress is unprepared for high-consequence actions: no limits before auth, one token
-   with one scope.
+4. M2.1 bounds HTTP parsing and moves auth before bodies; connection/resource caps and
+   the action boundary remain pending. One token still has one scope.
 5. The frontend has no data model for controls; the layout is arithmetic.
-6. Nothing is testable in isolation: one target, no tests, no CI.
+6. Pure parser/admission logic and HTTP lifecycle have Swift Testing coverage. Other modules
+   still lack isolated tests; there is no CI.
 
 ## 13. PLANNED extension seams
 
-Approved direction (see `docs/DECISIONS.md` ADR-005 to ADR-010). **None of this exists
-yet.**
+Approved direction (see `docs/DECISIONS.md` ADR-005 to ADR-010). Except for the
+explicitly marked M2.1 HTTP admission portion, these seams are **not implemented**.
 
 | Seam | Milestone | Shape |
 |---|---|---|
 | **Action boundary** | M2 (foundational) | An internal representation of an approved action — identifier, display metadata, validated parameters, server-side execution allowlist. App launch, Shortcuts, developer and Git actions all become implementations of it. No arbitrary shell execution. |
 | **Versioned configuration** | M2 (foundational) | A versioned document under `~/.oldphonedeck` that can express controls, action types and metadata, with explicit migration that preserves the existing `launcher.json` selection. |
-| **Ingress / auth hardening** | M2 (minimum, foundational) → M5 (complete) | M2: limits enforced before large buffering, connection/resource bounds, and the minimum authorization boundary. M5: T3 review, complete authentication assessment, remaining hardening. |
+| **Ingress / auth hardening** | M2.1 HTTP admission implemented; remaining M2 → M5 | M2.1: bounded headers/body, early query-token auth, absolute receive deadlines. Pending: connection/resource bounds and Action authorization. M5: independent T3 assessment and remaining hardening. |
 | **Collector boundary** | Just-in-time with M4 telemetry | Registry of collectors (each with its own queue) composed into one snapshot, so Git/agent status does not edit the route table. |
 | **Frontend data model** | M3 | Data-driven controls and widgets, layout described rather than hand-computed — while staying one ES5 file with no framework. |
 
