@@ -59,18 +59,22 @@ WebSocket ingress has two connection slots, a five-second authentication deadlin
 readiness, one producer and bounded messages. Frame delivery coalesces to the latest
 pending frame; proposed-total audio accounting caps playback at 4000 frames (250 ms).
 
-Automated validation: all **60 Swift Testing tests** pass (35 retained M2.1 tests and
-25 new tests, including parameterized close/rejection cases). The release build passes
+Automated validation: all **63 Swift Testing tests** pass (35 retained M2.1 tests and
+28 M2.2 tests, including parameterized close/rejection cases). The release build passes
 without warnings. Loopback integration exercises the full 32-slot shared budget, all
 HTTP close paths, MJPEG admission/drop/cleanup, pending WS handshakes, auth expiry,
-producer exclusion, binary/control/message boundaries, and WSS-to-MJPEG delivery. Real
-HTTPS/WSS use a temporary identity imported only into memory; no user configuration,
-keychain certificates or audio hardware are touched. Tests do not start the full app.
+producer exclusion, binary/control/message boundaries, and WSS-to-MJPEG delivery. The
+WebSocket receive cap is now proven framework-only: a sink that performs no application
+parsing rejects a 3 MiB message, so raising the production cap to 4 MiB fails those
+checks. Real HTTPS/WSS use a temporary identity imported only into memory; no user
+configuration, keychain certificates or audio hardware are touched. Tests do not start
+the full app.
 
 M2 is **not complete**. The Action Registry and versioned configuration have not started.
-M5 remains the independent security/reliability review. No M2.2 physical acceptance is
-claimed; later iPhone checks must cover HTTPS Phone tab, camera/MJPEG delivery, camera
-switching, microphone, stream reconnection and healthy UI polling during ordinary use.
+M5 remains the independent security/reliability review. Physical iPhone 11 checks passed
+for WSS streaming, camera frames reaching the Mac, fresh-frame delivery, front/back
+switching, reconnection and deck polling; audio playback remains unverified because
+BlackHole is absent, and Steering acceptance of M2.2 is still pending.
 
 Implement only the minimum architectural foundations required for safe extensibility.
 Foundational boundaries — features must not be built ahead of them.

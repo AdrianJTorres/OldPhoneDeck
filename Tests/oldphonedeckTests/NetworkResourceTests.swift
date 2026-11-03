@@ -361,4 +361,107 @@ struct WebSocketResourceTests {
         #expect(resourceEventually { server.resourceCounts.connections == 0 })
         #expect(server.latestFrame == nil)
     }
+
+    // MARK: Framework-only receive cap
+
+    // The test above cannot isolate the framework limit: PhoneMediaMessage.parse applies
+    // its own 2 MiB ceiling, so a laxer NWProtocolWebSocket cap would still close the
+    // connection. These checks talk to a sink that performs no application parsing, so
+    // maximumMessageSize is the only gate under test.
+
+    @Test func productionWebSocketOptionsCapMessagesAtTwoMiB() {
+        #expect(LocalTLS.webSocketOptions().maximumMessageSize == 2 * 1024 * 1024)
+        #expect(PhoneMediaMessage.maximumMessageSize == 2 * 1024 * 1024)
+        #expect(LocalTLS.webSocketOptions().maximumMessageSize == PhoneMediaMessage.maximumMessageSize)
+    }
+
+    @Test func frameworkOnlyReceptionRejectsMessageAboveProductionCap() throws {
+        let sink = try FrameworkOnlySink()
+        defer { sink.stop() }
+        try #require(resourceEventually { (sink.port?.rawValue ?? 0) > 0 })
+        let peer = try frameworkOnlyClient(port: try #require(sink.port))
+        defer { peer.cancel() }
+        peer.send(Data(repeating: 1, count: 1024), opcode: .binary)
+        try #require(resourceEventually { sink.delivered == [1024] })
+        // 3 MiB is above the 2 MiB production cap but below a 4 MiB mutation, so a
+        // framework that accepts it makes the delivery assertion below fail.
+        peer.send(Data(repeating: 1, count: 3 * 1024 * 1024), opcode: .binary)
+        #expect(resourceEventually { sink.hasEnded })
+        #expect(sink.delivered == [1024], "framework delivered messages of size \(sink.delivered)")
+    }
+
+    @Test func frameworkOnlyReceptionRejectsFragmentedMessageAboveProductionCap() throws {
+        let sink = try FrameworkOnlySink()
+        defer { sink.stop() }
+        try #require(resourceEventually { (sink.port?.rawValue ?? 0) > 0 })
+        let peer = try frameworkOnlyClient(port: try #require(sink.port))
+        defer { peer.cancel() }
+        peer.send(Data(repeating: 1, count: 1024), opcode: .binary)
+        try #require(resourceEventually { sink.delivered == [1024] })
+        // Each fragment is within budget while the reassembled message is not. Observed
+        // behaviour: the framework ends the connection and never hands up more than the
+        // configured cap (a 2 MiB part is delivered, the remainder is not). A 4 MiB
+        // mutation would deliver the full 3 MiB and fail the bound below.
+        peer.sendFragmented(Data(repeating: 1, count: 2 * 1024 * 1024),
+                            Data(repeating: 1, count: 1024 * 1024))
+        #expect(resourceEventually { sink.hasEnded })
+        let payloadSizes = Array(sink.delivered.dropFirst())   // the 1 KiB control arrived first
+        #expect(payloadSizes.allSatisfy { $0 <= 2 * 1024 * 1024 },
+                "framework delivered messages of size \(payloadSizes)")
+    }
+
+    private func frameworkOnlyClient(port: NWEndpoint.Port) throws -> ResourceTestClient {
+        // Plain client options: the peer must be able to send above the receive cap.
+        let parameters = NWParameters.tcp
+        parameters.defaultProtocolStack.applicationProtocols.insert(NWProtocolWebSocket.Options(), at: 0)
+        let client = ResourceTestClient(port: port, parameters: parameters)
+        try #require(resourceEventually { client.isReady }, "WebSocket client state: \(client.state)")
+        return client
+    }
+}
+
+/// Counts complete WebSocket messages exactly as the protocol hands them up, with no
+/// application parsing, so `LocalTLS.webSocketOptions()` is the only size gate.
+private final class FrameworkOnlySink {
+    let queue = DispatchQueue(label: "framework-only-sink")
+    private let listener: NWListener
+    private var sizes: [Int] = []
+    private var ended = false
+    private var connections: [NWConnection] = []
+
+    init() throws {
+        let parameters = NWParameters.tcp
+        parameters.defaultProtocolStack.applicationProtocols.insert(LocalTLS.webSocketOptions(), at: 0)
+        listener = try NWListener(using: parameters, on: .any)
+        listener.newConnectionHandler = { [self] nw in
+            connections.append(nw)
+            nw.stateUpdateHandler = { state in
+                switch state {
+                case .failed, .cancelled: self.ended = true
+                default: break
+                }
+            }
+            nw.start(queue: queue)
+            receive(on: nw)
+        }
+        listener.start(queue: queue)
+    }
+
+    private func receive(on nw: NWConnection) {
+        nw.receiveMessage { [self] data, _, complete, error in
+            if let data, complete { sizes.append(data.count) }
+            if error != nil { ended = true; nw.cancel(); return }
+            if complete && data == nil { ended = true; nw.cancel(); return }
+            receive(on: nw)
+        }
+    }
+
+    var port: NWEndpoint.Port? { listener.port }
+    var delivered: [Int] { queue.sync { sizes } }
+    var hasEnded: Bool { queue.sync { ended } }
+
+    func stop() {
+        listener.cancel()
+        queue.sync { for connection in connections { connection.cancel() } }
+    }
 }
