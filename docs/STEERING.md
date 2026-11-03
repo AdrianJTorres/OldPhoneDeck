@@ -1,0 +1,163 @@
+# STEERING.md — PhoneDeck project charter
+
+Canonical charter for PhoneDeck. If a proposal conflicts with this document, the
+document wins until Steering amends it. Operational rules for agents live in
+`AGENTS.md`; architectural facts in `docs/ARCHITECTURE.md`.
+
+Status: **living document**, owned by Steering, revision 1 (2026-11-03).
+
+---
+
+## 1. Why PhoneDeck exists
+
+An old iPhone is still a bright, always-on, touch display with Wi-Fi and a browser.
+A Mac on the same desk has apps, media, builds, tests, Git state and AI agents running
+on it, but no cheap physical surface to touch them.
+
+PhoneDeck turns that spare phone into a dedicated control surface and status display
+for the Mac — no jailbreak, no App Store, no client to install: Safari renders a page
+served by the Mac itself.
+
+The project exists because the combination is unusually cheap and unusually useful:
+one small Swift binary, one HTML file, one phone that would otherwise be in a drawer.
+
+## 2. Hardware roles
+
+### iPhone 11 — primary interactive control surface
+
+The iPhone 11 is the **main** device. It is modern enough for the secure-context
+features (HTTPS, camera, microphone, speech recognition) and is the device that must
+work every day.
+
+- Landscape and portrait layouts, Home Screen installation, full-screen standalone mode.
+- All interactive controls: keys, media transport, notes into Claude, developer actions.
+- Physical-device acceptance testing for every milestone that changes the UI happens
+  on this device.
+
+### iPhone 7 Plus — future information / dashboard role
+
+The iPhone 7 Plus is **reserved for a later milestone** and is not a target for current
+work. Its intended role is an always-on dashboard: status, telemetry and read-only
+information, rather than fast interactive control.
+
+- Large screen, always-on, low interaction frequency.
+- No milestone before V1 depends on it.
+- Any work on it must not complicate the iPhone 11 primary path.
+
+Nothing in the current architecture is designed for two devices simultaneously; see
+`docs/ARCHITECTURE.md` §10 for the limitations that would matter.
+
+## 3. Project goals
+
+1. A phone on the desk reliably controls the Mac: launch apps, media, capture a note.
+2. The Mac's state is visible at a glance: network, batteries, media, and — over time —
+   Git and agent status.
+3. The surface is **configurable** without editing code: what the keys do, in what order.
+4. Actions are **explicitly approved** on the server, never arbitrary commands from a
+   browser.
+5. The whole thing keeps building and running with one command on a Mac with no IDE.
+6. Every milestone is verifiable on the physical iPhone 11.
+
+## 4. Non-goals
+
+- Not a general remote-desktop or VNC replacement.
+- Not an internet-exposed service. No port forwarding, no tunnels, no cloud relay.
+- Not multi-user, not multi-tenant, no accounts, no sync.
+- Not a cross-platform product. macOS only.
+- Not an App Store app; not an iOS client; no Xcode project, no code signing workflow.
+- Not a rewrite of OldPhoneDeck, and not a framework for building control panels.
+- Not a place for arbitrary shell execution triggered by a browser.
+- Not a dependency-heavy stack, and not a place to "modernise" the frontend for its own sake.
+
+## 5. Architecture philosophy
+
+- **Small and boring.** One Swift executable, one HTML file, standard library and
+  system frameworks. Boring is a feature: it survives months of neglect.
+- **Incremental evolution.** OldPhoneDeck is the base. Add seams where features will
+  attach; do not rebuild what already works.
+- **Server-authoritative.** The Mac decides what may happen. The phone is a remote
+  control, never a trusted peer.
+- **Allowlists over validation-by-convention.** A path or action is executable only if
+  it appears in a list the server itself produced.
+- **Compatibility is a constraint, not a target.** The page must keep running on iOS 8/9
+  Safari, because that is what makes the "old phone" premise true.
+- **Documented boundaries before features.** Boundaries that features will depend on are
+  introduced deliberately, one milestone ahead, not discovered mid-feature.
+
+## 6. Hybrid Coding AI workflow
+
+Work is routed by difficulty and risk, not by preference.
+
+| Tier | Nature of work | Agent |
+|---|---|---|
+| T1 | Small, well-scoped, low-risk changes | Qwen Code |
+| T2 | Multi-file implementation inside an approved design | Qwen Code |
+| T3 | Security-sensitive, architecture-sensitive, or hard-to-diagnose work | Codex |
+
+- **Qwen Code** is the primary implementation agent: repository analysis, routine
+  terminal work, scoped implementation, verification, documentation.
+- **Codex** handles T3 work and performs **independent review** of work it did not
+  author, especially anything touching authentication, ingress, action authorization,
+  TLS, or process execution.
+- **Steering** (the human project owner) holds architecture and scope authority:
+  decides milestones, accepts or rejects architectural changes, ratifies ADRs.
+- **The human does not execute routine terminal commands.** Agents do. Human
+  intervention is reserved for what an agent cannot do: macOS permission dialogs,
+  credentials, physical-device checks, and decisions.
+- **One WRITE_OWNER per branch/worktree.** Everyone else is read-only on that branch.
+
+See `docs/DECISIONS.md` ADR-011 to ADR-013.
+
+## 7. Milestone governance
+
+1. Steering defines a milestone as a bounded brief with an objective, explicit tasks,
+   an explicit list of things **not** to do, and success criteria.
+2. The agent executes only that milestone. Findings outside scope are **recorded**, not
+   fixed.
+3. A milestone closes only when its success criteria are demonstrated — build output,
+   endpoint behaviour, and where relevant a check on the physical iPhone 11.
+4. A milestone does not begin until its predecessor is accepted by Steering.
+5. Architectural change requires an ADR **and** explicit Steering acceptance. It is not
+   a side effect of an implementation task.
+6. Documentation is part of the milestone, not an afterthought: a milestone that changes
+   behaviour updates `docs/ARCHITECTURE.md`, and a milestone that changes a boundary adds
+   an ADR.
+
+## 8. Definition of V1
+
+V1 is reached when, on the physical iPhone 11, a user can:
+
+1. **Control** — launch configured apps and macOS Shortcuts from keys whose content and
+   order they configured on the device, without editing code or config files by hand.
+2. **Capture** — dictate or type a note that opens a new Claude conversation on the Mac.
+3. **Observe** — see media state, network, batteries, and Git/agent status for an
+   allowlisted repository.
+4. **Operate safely** — every action available to the phone is explicitly allowlisted on
+   the Mac; no endpoint can execute an arbitrary command.
+5. **Recover** — start the whole system with one documented command after a reboot, and
+   reinstall to the Home Screen from documented steps.
+6. **Trust the boundary** — authentication, ingress limits and action authorization have
+   been independently reviewed (Codex, T3) and the known HIGH risks recorded in M1 are
+   resolved or explicitly accepted.
+
+V1 is not defined by feature count. It is defined by those six properties being true
+and demonstrable.
+
+## 9. Current status (2026-11-03)
+
+| Milestone | State |
+|---|---|
+| M0 — Baseline verification | **COMPLETE** — fork created, clone configured, baseline `e622184` builds and runs, verified on the iPhone 11 |
+| M1 — Understand & document | **IN PROGRESS** — M1.1 repository analysis accepted by Steering; M1.2 project documentation in `docs/project-steering` |
+| M2 — Foundations | Not started |
+| M3 — PhoneDeck UI | Not started |
+| M4 — Developer Deck | Not started |
+| M5 — Security & reliability | Not started |
+| M6 — PhoneDeck V1 | Not started |
+
+Physically verified on the iPhone 11: Safari loads the deck, Home Screen installation
+works, Mac application control works, Spotify control works.
+
+Known risks carried forward from M1 are recorded in `docs/ARCHITECTURE.md` §9. They are
+**open**, not fixed. Ingress/auth hardening and the allowlisted action boundary are the
+first order of business in M2.
