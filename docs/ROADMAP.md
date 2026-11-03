@@ -52,9 +52,12 @@ warnings; endpoint checks against the release binary passed, including HTTP/HTTP
 and a launcher save/read in temporary configuration. No physical iPhone acceptance is
 claimed for this slice.
 
-M2.2 — Bounded Media / Resources: **IN PROGRESS**, implemented on
-`m2.2/bounded-media-resources`, pending independent review, physical iPhone 11 validation
-and Steering acceptance. HTTP/HTTPS share 32 slots including up to two MJPEG viewers.
+M2.2 — Bounded Media / Resources: **COMPLETE**, accepted by Steering (2026-11-03).
+Implemented on `m2.2/bounded-media-resources` in `d0f665544b9d880e074825efbcdeeff65252d168`;
+the framework-limit test correction is `6742816552590f46b80363cfe261f547aa820bee`.
+Independent Codex review: PASS WITH MINOR FINDINGS, zero blockers/majors; its only
+minor test-coverage finding was corrected and verified with a 2 MiB → 4 MiB mutation.
+HTTP/HTTPS share 32 slots including up to two MJPEG viewers.
 WebSocket ingress has two connection slots, a five-second authentication deadline from
 readiness, one producer and bounded messages. Frame delivery coalesces to the latest
 pending frame; proposed-total audio accounting caps playback at 4000 frames (250 ms).
@@ -73,8 +76,11 @@ the full app.
 M2 is **not complete**. The Action Registry and versioned configuration have not started.
 M5 remains the independent security/reliability review. Physical iPhone 11 checks passed
 for WSS streaming, camera frames reaching the Mac, fresh-frame delivery, front/back
-switching, reconnection and deck polling; audio playback remains unverified because
-BlackHole is absent, and Steering acceptance of M2.2 is still pending.
+switching, reconnection and deck polling. Continuous live MJPEG was not confirmed on
+the physical iPhone, although automated WSS-to-MJPEG delivery passed. Mic-to-Mac playback
+was not verified because BlackHole was absent. Both limitations remain explicitly
+unverified and must not be represented as acceptance passes; revisit in V1 device
+acceptance when those capabilities are required.
 
 Implement only the minimum architectural foundations required for safe extensibility.
 Foundational boundaries — features must not be built ahead of them.

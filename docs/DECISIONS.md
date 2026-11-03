@@ -284,8 +284,11 @@ still outstanding.
 
 ## ADR-014 — Explicit bounded HTTP and media ownership (M2.2)
 
-**Status:** Implementation authorized by the M2.2 Steering brief · 2026-11-03.
-Independent review, physical iPhone validation and milestone acceptance remain pending.
+**Status:** Accepted by Steering · 2026-11-03. Independent review found no blockers/majors;
+one minor framework-size test-coverage finding was corrected and mutation-verified (63/63
+tests pass). Physical iPhone streaming, fresh frames, camera switching, reconnection and
+deck polling passed. Continuous live MJPEG and mic-to-Mac playback were not physically
+verified; BlackHole was unavailable.
 
 **Context.** M2.1 bounds each HTTP request but does not cap simultaneous connections or
 media producers/viewers. The per-viewer frame-drop guard cannot prevent JPEGs from

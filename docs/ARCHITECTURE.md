@@ -3,8 +3,9 @@
 Architecture reference for coding agents. Describes **current behavior**, including
 M2.1 bounded HTTP admission and M2.2 media/resource limits, and explicitly labelled
 **planned** extension seams. The upstream baseline is `e622184`; neither slice is
-completion of M2 or the M5 review. M2.2 still requires independent review, physical
-iPhone validation and Steering acceptance.
+completion of M2 or the M5 review. M2.2 passed independent review and targeted iPhone 11
+camera acceptance and was accepted by Steering; physical audio and continuous live MJPEG
+were not verified.
 
 - Current behavior: §1–§8, §10–§11
 - Known limitations: §12
@@ -307,7 +308,7 @@ HIGH
 
 | Risk | Where |
 |---|---|
-| M2.1/M2.2 bound HTTP bodies, connections, media clients and buffering. Independent M2.2 review and physical validation remain pending; these are minimum bounds, not full DoS protection. | `HTTPServer.swift`, `ResourceLimits.swift`, `PhoneMedia.swift` |
+| M2.1/M2.2 bound HTTP bodies, connections, media clients and buffering. M2.2 passed independent review and targeted physical camera validation; physical audio and continuous live MJPEG remain unverified. These minimum bounds are not full DoS protection. | `HTTPServer.swift`, `ResourceLimits.swift`, `PhoneMedia.swift` |
 | Cleartext HTTP carries the full-control token and all commands — **M5** | `:8045` route table |
 | One unscoped token authorises every action; no expiry, scopes or audit — **M5** (M2 adds the minimum authorization boundary) | `DeckRoute.admit`, wired by `main.swift` |
 
