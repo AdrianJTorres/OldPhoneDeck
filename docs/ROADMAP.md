@@ -23,23 +23,25 @@ the original application running from the iPhone 11.
 
 ## M1 — Understand & document
 
-**STATUS: IN PROGRESS**
+**STATUS: COMPLETE** (2026-11-03)
 
 Understand the repository completely before modifying it, then record the result.
 
-- **M1.1 — Repository analysis:** COMPLETE and accepted by Steering. Full architecture
+- **M1.1 — Repository analysis:** COMPLETE, accepted by Steering. Full architecture
   map, request flow, endpoint inventory, macOS integration list, persistence map,
   frontend analysis, extension points, risks (HIGH / MEDIUM / LOW).
-- **M1.2 — Project documentation:** this branch (`docs/project-steering`). Establishes
-  `AGENTS.md`, `docs/STEERING.md`, `docs/ARCHITECTURE.md`, `docs/ROADMAP.md`,
-  `docs/DECISIONS.md`. No product code changes.
+- **M1.2 — Project documentation:** COMPLETE, reviewed and accepted by Steering. Delivered
+  on `docs/project-steering`: `AGENTS.md`, `docs/STEERING.md`, `docs/ARCHITECTURE.md`,
+  `docs/ROADMAP.md`, `docs/DECISIONS.md`. No product code changes.
 
-Exit criteria: documentation accepted by Steering; no `Sources/**` or `Package.swift`
-change; project still builds.
+Exit criteria: met — documentation accepted by Steering; no `Sources/**` or
+`Package.swift` change; project builds.
 
 ## M2 — Foundations
 
 **STATUS: NEXT**
+
+No M2 implementation has started.
 
 Implement only the minimum architectural foundations required for safe extensibility.
 Foundational boundaries — features must not be built ahead of them.

@@ -152,8 +152,8 @@ and demonstrable.
 | Milestone | State |
 |---|---|
 | M0 — Baseline verification | **COMPLETE** — fork created, clone configured, baseline `e622184` builds and runs, verified on the iPhone 11 |
-| M1 — Understand & document | **IN PROGRESS** — M1.1 repository analysis accepted by Steering; M1.2 project documentation in `docs/project-steering` |
-| M2 — Foundations | Not started |
+| M1 — Understand & document | **COMPLETE** — M1.1 repository analysis and M1.2 project documentation both reviewed and accepted by Steering |
+| M2 — Foundations | **NEXT** — no implementation started |
 | M3 — PhoneDeck UI | Not started |
 | M4 — Developer Deck | Not started |
 | M5 — Security & reliability | Not started |
