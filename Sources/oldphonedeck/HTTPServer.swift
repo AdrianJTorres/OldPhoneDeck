@@ -1,89 +1,89 @@
 import Foundation
 import Network
 
-/// Minimal HTTP/1.1 server (one request per connection) — enough for iOS 9 Safari.
-struct HTTPRequest {
-    let method: String
-    let path: String
-    let query: [String: String]
-    let headers: [String: String]
-    let body: Data
-
-    /// Query string merged with an x-www-form-urlencoded body.
-    var params: [String: String] {
-        var p = query
-        if headers["content-type"]?.hasPrefix("application/x-www-form-urlencoded") == true,
-           let s = String(data: body, encoding: .utf8) {
-            for (k, v) in HTTPRequest.parseForm(s) { p[k] = v }
-        }
-        return p
-    }
-
-    static func parseForm(_ s: String) -> [String: String] {
-        var out: [String: String] = [:]
-        for pair in s.split(separator: "&") {
-            let kv = pair.split(separator: "=", maxSplits: 1).map {
-                String($0).replacingOccurrences(of: "+", with: " ").removingPercentEncoding ?? String($0)
-            }
-            if let k = kv.first { out[k] = kv.count > 1 ? kv[1] : "" }
-        }
-        return out
-    }
-}
-
 /// Lifetime: each pending receive/send closure holds the connection strongly; streaming viewers are held by `viewers`.
 final class HTTPConnection {
     private let conn: NWConnection
-    private var buffer = Data()
-    private let maxBody = 512 * 1024 * 1024
+    private var parser = HTTPRequestParser()
+    private var requestFinished = false
+    private var deadline: DispatchWorkItem?
+    private let headerTimeout: TimeInterval
+    private let bodyTimeout: TimeInterval
     private var sending = false
     var onClose: (() -> Void)?
 
-    init(_ conn: NWConnection) { self.conn = conn }
+    init(_ conn: NWConnection, headerTimeout: TimeInterval = 10, bodyTimeout: TimeInterval = 10) {
+        self.conn = conn
+        self.headerTimeout = headerTimeout
+        self.bodyTimeout = bodyTimeout
+    }
 
-    func start(queue: DispatchQueue, handler: @escaping (HTTPRequest, HTTPConnection) -> Void) {
+    func start(queue: DispatchQueue, admission: @escaping HTTPAdmission,
+               handler: @escaping (HTTPRequest, HTTPConnection) -> Void) {
         conn.stateUpdateHandler = { [weak self] state in
             switch state {
-            case .failed, .cancelled: self?.onClose?(); self?.onClose = nil
+            case .failed, .cancelled:
+                self?.requestFinished = true
+                self?.deadline?.cancel()
+                self?.deadline = nil
+                self?.onClose?()
+                self?.onClose = nil
             default: break
             }
         }
+        // Absolute from acceptance, including connection/TLS setup; never reset by a trickle.
+        armDeadline(after: headerTimeout, queue: queue)
         conn.start(queue: queue)
-        receive(handler)
+        receive(queue: queue, admission: admission, handler: handler)
     }
 
-    private func receive(_ handler: @escaping (HTTPRequest, HTTPConnection) -> Void) {
-        conn.receive(minimumIncompleteLength: 1, maximumLength: 1 << 20) { data, _, done, error in
-            if let data { self.buffer.append(data) }
-            if let req = self.parse() { handler(req, self); return }
-            if done || error != nil || self.buffer.count > self.maxBody { self.conn.cancel(); return }
-            self.receive(handler)
+    private func armDeadline(after seconds: TimeInterval, queue: DispatchQueue) {
+        deadline?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, !self.requestFinished else { return }
+            // Cancel directly: even a connection that never becomes ready must be bounded.
+            self.requestFinished = true
+            self.conn.cancel()
         }
+        deadline = work
+        queue.asyncAfter(deadline: .now() + seconds, execute: work)
     }
 
-    private func parse() -> HTTPRequest? {
-        guard let end = buffer.range(of: Data("\r\n\r\n".utf8)),
-              let head = String(data: buffer[buffer.startIndex..<end.lowerBound], encoding: .utf8) else { return nil }
-        var lines = head.components(separatedBy: "\r\n")
-        let parts = lines.removeFirst().split(separator: " ")
-        guard parts.count >= 2 else { return nil }
-        var headers: [String: String] = [:]
-        for line in lines {
-            guard let i = line.firstIndex(of: ":") else { continue }
-            headers[line[..<i].lowercased()] = line[line.index(after: i)...].trimmingCharacters(in: .whitespaces)
+    private func receive(queue: DispatchQueue, admission: @escaping HTTPAdmission,
+                         handler: @escaping (HTTPRequest, HTTPConnection) -> Void) {
+        conn.receive(minimumIncompleteLength: 1, maximumLength: parser.maximumReceiveLength) { data, _, done, error in
+            guard !self.requestFinished else { return }
+            do {
+                let wasHeaders = self.parser.phase == .headers
+                if let request = try self.parser.receive(data ?? Data(), admission: admission) {
+                    self.requestFinished = true
+                    self.deadline?.cancel()
+                    self.deadline = nil
+                    handler(request, self)
+                    return
+                }
+                if wasHeaders && self.parser.phase == .body {
+                    self.armDeadline(after: self.bodyTimeout, queue: queue)
+                }
+                if error != nil { self.conn.cancel(); return }
+                if done { self.respond(400, text: "incomplete request"); return }
+                self.receive(queue: queue, admission: admission, handler: handler)
+            } catch let failure as HTTPFailure {
+                self.respond(failure.status, text: failure.message)
+            } catch {
+                self.respond(400, text: "invalid request")
+            }
         }
-        let length = Int(headers["content-length"] ?? "0") ?? 0
-        guard buffer.count - end.upperBound >= length else { return nil }
-        let body = buffer.subdata(in: end.upperBound..<(end.upperBound + length))
-        let target = String(parts[1])
-        let comps = URLComponents(string: "http://h" + target)
-        var query: [String: String] = [:]
-        for item in comps?.queryItems ?? [] { query[item.name] = item.value ?? "" }
-        return HTTPRequest(method: String(parts[0]), path: comps?.path ?? target, query: query, headers: headers, body: body)
     }
 
     func respond(_ status: Int = 200, _ type: String = "text/plain; charset=utf-8", _ body: Data) {
-        let reason = [200: "OK", 400: "Bad Request", 403: "Forbidden", 404: "Not Found", 500: "Error"][status] ?? "OK"
+        requestFinished = true
+        deadline?.cancel()
+        deadline = nil
+        let reason = [200: "OK", 400: "Bad Request", 403: "Forbidden", 404: "Not Found",
+                      405: "Method Not Allowed", 411: "Length Required", 413: "Content Too Large",
+                      414: "URI Too Long", 417: "Expectation Failed", 431: "Request Header Fields Too Large",
+                      500: "Internal Server Error"][status] ?? "Error"
         var head = "HTTP/1.1 \(status) \(reason)\r\nContent-Type: \(type)\r\nContent-Length: \(body.count)\r\n"
         head += "Cache-Control: no-store\r\nConnection: close\r\n\r\n"
         conn.send(content: Data(head.utf8) + body, completion: .contentProcessed { _ in self.conn.cancel() })
@@ -127,8 +127,10 @@ final class HTTPServer {
         listener = try NWListener(using: parameters, on: NWEndpoint.Port(rawValue: port)!)
     }
 
-    func start(_ handler: @escaping (HTTPRequest, HTTPConnection) -> Void) {
-        listener.newConnectionHandler = { [queue] nw in HTTPConnection(nw).start(queue: queue, handler: handler) }
+    func start(admission: @escaping HTTPAdmission, _ handler: @escaping (HTTPRequest, HTTPConnection) -> Void) {
+        listener.newConnectionHandler = { [queue] nw in
+            HTTPConnection(nw).start(queue: queue, admission: admission, handler: handler)
+        }
         listener.stateUpdateHandler = { state in
             if case .failed(let e) = state { print("Server failed: \(e)"); exit(1) }
         }

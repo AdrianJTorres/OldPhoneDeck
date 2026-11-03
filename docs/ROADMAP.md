@@ -39,9 +39,22 @@ Exit criteria: met — documentation accepted by Steering; no `Sources/**` or
 
 ## M2 — Foundations
 
-**STATUS: NEXT**
+**STATUS: IN PROGRESS**
 
-No M2 implementation has started.
+M2.1 — Bounded HTTP Admission: **COMPLETE**, accepted by Steering. Implemented in
+`4dd7fae593934053b5595b01cb52735351d42e18` on `m2.1/bounded-http-admission`: bounded
+header/framing parsing, application-supplied early admission shared by HTTP/HTTPS, route
+body limits, absolute header/body deadlines, and focused Swift Testing coverage.
+
+Validation: independent Codex review returned **PASS** with no blockers, major findings,
+minor findings or nits; 35/35 automated tests pass; the release build passes without
+warnings; endpoint checks against the release binary passed, including HTTP/HTTPS admission
+and a launcher save/read in temporary configuration. No physical iPhone acceptance is
+claimed for this slice.
+
+M2 is **not complete**. M2.2 — Bounded Media / Resources is **NEXT** and has not started.
+The Action Registry and versioned configuration follow. M5 remains the independent
+security/reliability review.
 
 Implement only the minimum architectural foundations required for safe extensibility.
 Foundational boundaries — features must not be built ahead of them.

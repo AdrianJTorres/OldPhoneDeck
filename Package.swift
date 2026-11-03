@@ -11,5 +11,6 @@ let package = Package(
             resources: [.copy("web")],
             linkerSettings: [.linkedFramework("AppKit")]
         ),
+        .testTarget(name: "oldphonedeckTests", dependencies: ["oldphonedeck"]),
     ]
 )
