@@ -114,9 +114,12 @@ Rules that always apply to **product code**:
   string.
 - **Validate inputs against server-side state**, not against client-supplied metadata.
 - **Keep the token out of logs, diagnostics and error messages.**
-- Existing known risks (pre-auth body buffering, cleartext token channel, single
-  unscoped token, `0644` TLS key material) are **recorded, not fixed** until M5.
-  Do not fix them opportunistically; do not regress them either.
+- **Security findings are owned by milestones, not fixed opportunistically.** M2 fixes the
+  ingress items explicitly assigned to it — limits enforced before large buffering, basic
+  connection and resource limits, and the minimum action-authorization boundary. M5
+  performs the independent T3 review, the complete authentication assessment and the
+  remaining hardening. Working on a finding outside the milestone that owns it is out of
+  scope; never regress a boundary that has already been established.
 
 ---
 

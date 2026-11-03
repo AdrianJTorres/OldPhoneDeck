@@ -4,7 +4,8 @@ Lightweight ADRs. One decision per record: context, decision, consequence. Accep
 are not edited — supersede them with a new ADR and mark the old one `Superseded by`.
 
 Known risks discovered in M1 are **not** decisions; they are recorded in
-`docs/ARCHITECTURE.md` §9 and remain open until M5.
+`docs/ARCHITECTURE.md` §9, which names the milestone that owns each one — M2 for the
+minimum ingress items, M5 for the independent review and the remaining hardening.
 
 ---
 
@@ -33,9 +34,9 @@ that are generally useful may be contributed upstream later, but the fork is the
 
 **Status:** Accepted · 2026-11-03
 
-**Context.** Two devices are available: an iPhone 11 and an iPhone 7 Plus. Only the
-iPhone 11 is modern enough for secure-context features (HTTPS, camera, microphone, speech
-recognition) and it has been the physical acceptance device since M0.
+**Context.** Two devices are available: an iPhone 11 and an iPhone 7 Plus. The project
+needs exactly one design and acceptance target, and the iPhone 11 has been the physical
+acceptance device since M0.
 
 **Decision.** The iPhone 11 is the primary target. Every milestone that changes the UI is
 accepted on the physical iPhone 11, in both landscape and portrait, including Home Screen
@@ -51,16 +52,18 @@ hands. Compatibility with old iOS remains a code constraint (ADR-004) even thoug
 
 **Status:** Accepted · 2026-11-03
 
-**Context.** The 7 Plus has a large screen and is well suited to an always-on display, but
-it cannot run the modern secure-context features reliably and adds a second device to
-reason about.
+**Context.** The 7 Plus has a large screen and is well suited to an always-on display.
+Supporting a second device now would add scope and a second acceptance surface before the
+primary one is finished.
 
-**Decision.** The iPhone 7 Plus is reserved for a later, read-only dashboard role. No
-milestone before V1 depends on it, and V1 must not be delayed by it.
+**Decision.** The iPhone 7 Plus is **intentionally reserved** for a later, read-only
+dashboard role. This is a product prioritisation, **not** a statement that the device is
+incapable of running secure browser features. No milestone before V1 depends on it, and V1
+must not be delayed by it.
 
 **Consequences.** Nothing in M2–M6 may assume a second simultaneous client. If the
 dashboard role is taken up later, it starts from the existing collector/telemetry seams
-rather than new architecture.
+rather than new architecture, and must not complicate the iPhone 11 path.
 
 ---
 
@@ -158,9 +161,11 @@ buffering, bound connections and keep one authorization boundary between deck co
 developer actions. Full authentication review belongs to M5 (Codex, T3), but the minimum
 must precede M3/M4 features.
 
-**Consequences.** M2 includes minimum ingress hardening even though it is not a feature.
-Security work is sequenced ahead of convenience, and M5 verifies rather than introduces
-the boundary.
+**Consequences.** M2 includes the minimum ingress hardening even though it is not a
+feature: limits enforced before large buffering, basic connection/resource bounds, and the
+minimum authorization boundary before higher-consequence actions. M5 performs the
+independent T3 review, completes the assessment and finishes the remaining hardening — it
+verifies and extends the M2 boundary rather than introducing it from scratch.
 
 ---
 

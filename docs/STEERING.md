@@ -25,9 +25,8 @@ one small Swift binary, one HTML file, one phone that would otherwise be in a dr
 
 ### iPhone 11 — primary interactive control surface
 
-The iPhone 11 is the **main** device. It is modern enough for the secure-context
-features (HTTPS, camera, microphone, speech recognition) and is the device that must
-work every day.
+The iPhone 11 is the **main** device: the one the project is designed around, the one whose
+behaviour is verified end to end, and the one that must work every day.
 
 - Landscape and portrait layouts, Home Screen installation, full-screen standalone mode.
 - All interactive controls: keys, media transport, notes into Claude, developer actions.
@@ -36,9 +35,14 @@ work every day.
 
 ### iPhone 7 Plus — future information / dashboard role
 
-The iPhone 7 Plus is **reserved for a later milestone** and is not a target for current
-work. Its intended role is an always-on dashboard: status, telemetry and read-only
-information, rather than fast interactive control.
+The iPhone 7 Plus is **intentionally reserved** for a later information/dashboard role and
+is not a target for current work. Its intended role is an always-on dashboard: status,
+telemetry and read-only information, rather than fast interactive control.
+
+This is a **product and design prioritisation, not a capability judgement**. The 7 Plus is
+not excluded because it cannot run secure browser features; it is a scope decision — one
+device must be the design and acceptance target, and a large always-on screen suits a
+passive display better than rapid touch interaction.
 
 - Large screen, always-on, low interaction frequency.
 - No milestone before V1 depends on it.
@@ -158,6 +162,7 @@ and demonstrable.
 Physically verified on the iPhone 11: Safari loads the deck, Home Screen installation
 works, Mac application control works, Spotify control works.
 
-Known risks carried forward from M1 are recorded in `docs/ARCHITECTURE.md` §9. They are
-**open**, not fixed. Ingress/auth hardening and the allowlisted action boundary are the
-first order of business in M2.
+Known risks carried forward from M1 are recorded in `docs/ARCHITECTURE.md` §9, together
+with the milestone that owns each one. They are **open**, not fixed. M2 delivers the
+minimum ingress hardening and the allowlisted action boundary; M5 performs the independent
+review and the remaining hardening.

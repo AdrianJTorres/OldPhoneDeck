@@ -49,8 +49,9 @@ Foundational boundaries — features must not be built ahead of them.
 - **Versioned configuration** — a configuration format that can express controls, action
   types and metadata, with explicit migration that preserves the existing launcher
   selection.
-- **Minimum ingress hardening** — request/header/connection limits enforced *before* body
-  buffering; keep the auth boundary between "deck control" and high-consequence actions.
+- **Minimum ingress hardening** — request/body/header limits enforced *before* large
+  buffering, basic connection and resource limits, and the minimum authorization boundary
+  needed before higher-consequence actions.
 
 Exit criteria: existing behaviour preserved on the iPhone 11; build clean; ADRs updated.
 
@@ -88,8 +89,10 @@ Independent review and hardening before V1.
 
 - **Codex T3 independent review** of authentication, ingress, action authorization and
   process execution.
-- **Auth** — resolve or explicitly accept the single-unscoped-token risk.
-- **Ingress** — limits, timeouts, connection caps; close the pre-auth buffering gap.
+- **Auth** — complete assessment; resolve or explicitly accept the single-unscoped-token
+  risk.
+- **Ingress** — verify and complete the M2 limits; remaining timeouts, caps and edge cases.
+- **HIGH risks** — resolve or explicitly accept what remains after M2.
 - **Command boundaries** — prove no path from browser input to arbitrary execution.
 - **Regression testing** — establish the missing test/CI baseline.
 - **Reliability** — startup after reboot, IP change, TLS re-issue, failure visibility.

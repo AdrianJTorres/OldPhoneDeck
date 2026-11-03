@@ -200,21 +200,31 @@ injection (dynamic text goes through `textContent`), no user-controlled argv in 
 `Process`, fixed absolute binary paths, frame-drop backpressure on both media paths,
 `0600` on the token and CA key.
 
-**Open risks carried from M1. Recorded, deliberately not fixed yet (M5).**
+**Open risks carried from M1.** Each risk is owned by a milestone, and ownership is not
+interchangeable:
+
+- **M2 — minimum foundational hardening.** Request/body/header limits enforced *before*
+  large buffering, basic connection and resource limits, and the minimum
+  action-authorization boundary that must exist before higher-consequence actions.
+- **M5 — independent review and completion.** Codex T3 assessment of authentication,
+  ingress, action authorization and process execution; remaining hardening; resolution or
+  explicit acceptance of the remaining HIGH risks.
+
+Nothing here is fixed opportunistically outside the milestone that owns it.
 
 HIGH
 
 | Risk | Where |
 |---|---|
-| Request body buffered (up to 512 MB) **before** authentication, no connection cap | `HTTPServer.swift` `maxBody`, `receive`; guard in `main.swift` |
-| Cleartext HTTP carries the full-control token and all commands | `:8045` route table |
-| One unscoped token authorises every action; no expiry, scopes or audit | `main.swift` auth guard |
+| Request body buffered (up to 512 MB) **before** authentication, no connection cap — **M2** | `HTTPServer.swift` `maxBody`, `receive`; guard in `main.swift` |
+| Cleartext HTTP carries the full-control token and all commands — **M5** | `:8045` route table |
+| One unscoped token authorises every action; no expiry, scopes or audit — **M5** (M2 adds the minimum authorization boundary) | `main.swift` auth guard |
 
 MEDIUM
 
 | Risk | Where |
 |---|---|
-| No header/request/idle limits, no keep-alive; MJPEG viewers unbounded | `HTTPServer.swift`, `main.swift` viewer registry |
+| No header/request/idle limits, no keep-alive; MJPEG viewers unbounded — **M2** | `HTTPServer.swift`, `main.swift` viewer registry |
 | `server.key` and `server.p12` are `0644`; PKCS#12 password hardcoded; CA downloadable unauthenticated | `TLS.swift`, `/oldphonedeck.mobileconfig` |
 | Configuration is a bare `[String]` with no version; unparseable and absent are indistinguishable | `Launcher.selected()` |
 | Frontend geometry and `APP_SLOTS` are hardcoded | `index.html` `layout`, `renderKeys` |
@@ -300,7 +310,7 @@ yet.**
 |---|---|---|
 | **Action boundary** | M2 (foundational) | An internal representation of an approved action — identifier, display metadata, validated parameters, server-side execution allowlist. App launch, Shortcuts, developer and Git actions all become implementations of it. No arbitrary shell execution. |
 | **Versioned configuration** | M2 (foundational) | A versioned document under `~/.oldphonedeck` that can express controls, action types and metadata, with explicit migration that preserves the existing `launcher.json` selection. |
-| **Ingress / auth hardening** | M2 (foundational) | Limits enforced before body buffering, connection limits, and an authorization boundary between "deck control" and high-consequence developer actions. |
+| **Ingress / auth hardening** | M2 (minimum, foundational) → M5 (complete) | M2: limits enforced before large buffering, connection/resource bounds, and the minimum authorization boundary. M5: T3 review, complete authentication assessment, remaining hardening. |
 | **Collector boundary** | Just-in-time with M4 telemetry | Registry of collectors (each with its own queue) composed into one snapshot, so Git/agent status does not edit the route table. |
 | **Frontend data model** | M3 | Data-driven controls and widgets, layout described rather than hand-computed — while staying one ES5 file with no framework. |
 
