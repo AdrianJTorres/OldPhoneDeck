@@ -85,6 +85,9 @@ stats.start()
 let music = Music()
 music.start()
 
+// Approved-action boundary: the only route from a request to an approved macOS action.
+let actions = ActionRegistry()
+
 // MARK: Routes
 
 let webRoot = Bundle.module.url(forResource: "web", withExtension: nil)!
@@ -152,9 +155,10 @@ let routes: (HTTPRequest, HTTPConnection) -> Void = { req, conn in
             server.queue.async { conn.respond(200, "image/png", png) }
         }
     case .launch:
-        let path = p["path"] ?? ""
-        guard Apps.isKnown(path) else { return conn.respond(404, text: "unknown app") }
-        DispatchQueue.main.async { Apps.launch(path) }
+        // Thin adapter: the registry authorizes against the Mac's own catalog and dispatches.
+        if let failure = AppLaunchAdapter.handle(p, registry: actions) {
+            return conn.respond(failure.status, text: failure.message)
+        }
         conn.respond(text: "ok")
     case .claude:
         let text = (p["text"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
