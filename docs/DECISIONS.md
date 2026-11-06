@@ -277,8 +277,8 @@ No library target, dependency or auth scheme was added.
 This implements the accepted direction without changing ADR-008. M2.1 has since completed
 independent Codex review (PASS, no findings) and Steering acceptance; the implementation
 commit is `4dd7fae593934053b5595b01cb52735351d42e18`. Connection and media/resource caps
-belong to M2.2, the Action boundary remains pending, and the M5 independent assessment is
-still outstanding.
+belong to M2.2; the Action boundary was subsequently delivered in M2.3, and the M5
+independent assessment is still outstanding.
 
 ---
 
@@ -315,3 +315,101 @@ lifecycle or UI is introduced. JPEG envelope checks do not decode/validate the f
 Whole audio chunks that exceed the remaining playback budget are dropped. Tests use
 loopback connections and a temporary memory-only TLS identity, not user configuration,
 certificates installed in a keychain, physical devices or BlackHole.
+
+---
+
+## Implementation note — ADR-005 / ADR-006 / M2.3
+
+**Status:** Accepted by Steering · 2026-11-06. Implemented on
+`m2.3/app-action-boundary`; review-findings closure commit
+`6d8cd813690e6d159562c8307c096fd8738023e9`.
+Initial independent Codex review: PASS WITH MINOR FINDINGS (three minor, no major/blocker).
+All three were corrected, and focused Codex re-review returned PASS with zero findings.
+The full Swift Testing suite passed 90/90 (12 suites), and the release build passed
+without warnings. Physical iPhone 11 testing and a live real-app 200 acceptance-path
+check were not claimed for this slice. M2 as a whole remains IN PROGRESS.
+
+M2.3 implements the first slice of ADR-006 without changing ADR-005 or ADR-006, and
+without touching ADR-007 (versioned configuration is a later slice).
+
+**What now exists.** One internal typed action boundary in `Sources/oldphonedeck/ActionRegistry.swift`,
+inside the existing single executable target: no new module, no dependency, no framework.
+`ActionID` validates identifier syntax (lowercase dotted name, at most 64 bytes) and the
+identifier must also name an entry in a server-authored descriptor table, so an unknown or
+malformed identifier fails closed and there is no registration entry point a client could
+reach. `ActionDescriptor` carries a display name and a kind; metadata describes an action,
+never authorizes one, and is not persisted. `ActionParameters` can only carry an application
+path. `ActionRegistry.dispatch` re-validates parameters (non-empty, at most 4096 UTF-8
+bytes) and then requires exact membership in the catalog the server itself produced, before
+`AppLaunchExecutor` runs. Every rejection returns before the executor is reached.
+
+**ADR-005 is preserved strictly.** An application path is data: no parameter shape can
+express a command, argv element, shell source, environment variable, working directory,
+script or process descriptor. No `Process`, no shell-out and no generic command runner is
+added. The only execution remains the existing `NSWorkspace` app launch, reached only after
+server-side authorization, with the pre-existing `DispatchQueue.main.async` hand-off to
+`Apps.launch` intact. A `.app` suffix, a plausible directory or a matching display name
+authorizes nothing.
+
+**Authorization moved inside the boundary**, out of the HTTP route, so a future caller that
+reaches the registry directly is still authorized. `POST /launch` became a thin adapter:
+the server names `app.launch`, the client supplies only data, and no client-supplied
+identifier is decoded. Wire compatibility is unchanged — same method, path, parameters,
+`200 ok` for an accepted launch, `404 unknown app` for every rejection, and the existing
+`403`/`405`/`411`/`413` admission behaviour. `ok` still acknowledges acceptance and
+dispatch, not activation. No new endpoint, no new route, no action permissions or token
+scopes, no persistence, no configuration schema, no plugin loader and no UI change.
+`/media`, `/claude`, `/speedtest`, `/launcher` and `/icon` remain legacy and are not
+migrated; Shortcuts, Git and developer actions are not created.
+
+**Testability.** The catalog resolver and the execution callback are injected, so tests use
+a deterministic fake catalog and a recording executor and never call NSWorkspace, need GUI
+automation or Accessibility permission, or require a physical device.
+
+**Known limitations.** Exactly one action is registered, so the boundary is proven with a
+single capability rather than a general framework; adding an action is a deliberate code
+change, not configuration. Path comparison stays exact string membership with no
+normalization, matching pre-M2.3 behaviour, so symlinked or traversal-spelled variants of
+an approved path are rejected rather than resolved (see the next section). Each dispatch
+re-runs the existing application-directory scan (`Apps.list()`), an unchanged cost.
+Rejection reasons are distinguished internally but collapse to one `404` on the wire for
+compatibility. Metadata is not exposed to the client and not persisted.
+
+**Filesystem trust limits (inherited; residual risk recorded for M5).** Authorization
+compares exact path **strings** against the catalog that `Apps.list()` builds with
+`contentsOfDirectory` over five directories and a `.app` suffix filter (`Control.swift`).
+It does not resolve, canonicalize or pin a filesystem object: no `realpath`, no
+inode/device identity, no `O_NOFOLLOW`, no bundle-identifier or code-signing check, and no
+re-check at execution time. Catalog entries may themselves be **symlinks** — on this Mac
+`/Applications/Safari.app` links to `../System/Cryptexes/App/System/Applications/Safari.app`
+— and `Apps.launch` passes the string to `NSWorkspace.openApplication`, which resolves it
+when it runs. Because execution is scheduled asynchronously on the main queue, a target
+could in principle be substituted between authorization and launch (a TOCTOU window), so an
+authorized path could end up naming a different bundle than the one that was enumerated.
+
+This is **inherited unchanged** from the pre-M2.3 route, which performed the same
+`Apps.isKnown` string check and the same asynchronous `NSWorkspace` launch. M2.3 moves the
+check inside the action boundary; it neither widens nor narrows what the filesystem is
+trusted to do. Exploiting the window requires the ability to modify the local filesystem in
+a scanned directory (`/Applications`, `/Applications/Utilities`, `/System/Applications`,
+`/System/Applications/Utilities` or the user's `~/Applications`) — an attacker with that
+write access already has local code-execution capability on macOS, and the system
+directories are root-owned and SIP-protected. **No new HTTP-only exploit was identified:**
+nothing a remote client can send influences which paths the catalog contains, and unapproved
+or near-miss strings are still rejected before execution.
+
+M2.3 therefore does **not** redesign the filesystem policy: no path normalization, no
+symlink resolution, no object pinning, and no change to `Apps.list()`, `Apps.isKnown`,
+`Apps.launch` or launcher persistence. Resolution or explicit acceptance of this residual
+risk belongs to **M5** (independent T3 review of action authorization and process
+execution), where it should be assessed together with the unscoped-token finding.
+
+**Evidence.** 90 Swift Testing tests pass (63 retained M2.1/M2.2 plus 27 new, of which four
+are parameterized into 44 cases); `swift build -c release` succeeds with no new warnings;
+the release binary was exercised on isolated ports with rejection paths only, so no
+application was launched and the real configuration was not written. Mutations — removing
+the catalog gate, removing parameter validation, removing the main-queue dispatch, and
+letting unknown identifiers fall back to the registered action — each turned the relevant
+tests red and were reverted; with the catalog gate **and** parameter validation removed
+simultaneously, the suite still fails closed with no test able to reach NSWorkspace, because
+no test constructs the production `ActionRegistry()`.

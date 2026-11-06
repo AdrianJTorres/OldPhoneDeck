@@ -1,11 +1,12 @@
 # ARCHITECTURE.md — PhoneDeck
 
 Architecture reference for coding agents. Describes **current behavior**, including
-M2.1 bounded HTTP admission and M2.2 media/resource limits, and explicitly labelled
-**planned** extension seams. The upstream baseline is `e622184`; neither slice is
-completion of M2 or the M5 review. M2.2 passed independent review and targeted iPhone 11
-camera acceptance and was accepted by Steering; physical audio and continuous live MJPEG
-were not verified.
+M2.1 bounded HTTP admission, M2.2 media/resource limits and the M2.3 approved-action
+boundary, and explicitly labelled **planned** extension seams. The upstream baseline is
+`e622184`; no slice is completion of M2 or the M5 review. M2.2 passed independent review
+and targeted iPhone 11 camera acceptance and was accepted by Steering; physical audio and
+continuous live MJPEG were not verified. M2.3 passed initial and focused independent review and was **accepted by Steering on
+2026-11-06**. No physical iPhone 11 test was claimed for the M2.3 slice.
 
 - Current behavior: §1–§8, §10–§11
 - Known limitations: §12
@@ -82,7 +83,8 @@ binary, stop it with Ctrl-C.
 | `HTTPServer.swift` | — | Bounded receive/deadlines, one request per connection, responses, MJPEG | `HTTPConnection`, `HTTPServer` |
 | `HTTPParsing.swift` | — | Incremental framing; application route metadata and admission | `HTTPRequestParser`, `HTTPRequestHead`, `HTTPRequest`, `HTTPFailure`, `DeckRoute` |
 | `ResourceLimits.swift` | — | Explicit HTTP/media budgets, message validation, frame handoff, audio accounting | `HTTPConnectionBudget`, `MediaSessionBudget`, `PhoneMediaMessage`, `LatestFrameHandoff`, `AudioQueueBudget` |
-| `Tests/oldphonedeckTests/` | — | Swift Testing parser/resource and HTTP/WS/WSS/TLS socket tests; no app startup | Parsing, lifecycle, budget, handoff and audio tests |
+| `ActionRegistry.swift` | — | Approved-action boundary: identifier syntax, server-authored metadata, typed parameters, authorization, controlled execution, shared `POST /launch` handler | `ActionID`, `ActionKind`, `ActionDescriptor`, `ActionParameters`, `AppLaunchParameters`, `ActionOutcome`, `ActionRegistry`, `AppLaunchExecutor`, `AppLaunchAdapter`, `AppLaunchRoute` |
+| `Tests/oldphonedeckTests/` | — | Swift Testing parser/resource, action-boundary and HTTP/WS/WSS/TLS socket tests; no app startup | Parsing, lifecycle, budget, handoff, audio, action and launch-route tests |
 | `TLS.swift` | — | Private CA, server cert, PKCS#12 identity, TLS/WS parameters | `LocalTLS.identity/makeCA/makeServerCert/loadIdentity/parameters` |
 | `PhoneMedia.swift` | — | Bounded WSS ingest/lifecycle, latest-frame cache, audio playback | `PhoneMediaServer`, `MediaWebSocketConnection`, `AudioOut` |
 | `Control.swift` | 116 | App enumeration/icons/launch, launcher config, Claude deep link, synthetic keys | `Input`, `Apps`, `Launcher`, `Claude` |
@@ -178,10 +180,35 @@ delivery block. A stalled HTTP queue cannot accumulate a block/data pair per inc
 frame. During delivery there can additionally be one executing frame; the frame cache and
 each viewer's in-flight send remain separately bounded.
 
+**Action boundary (M2.3, accepted).** `ActionRegistry` (`ActionRegistry.swift`) is the
+only path from a caller to an approved macOS action. `ActionID` validates identifier syntax
+(lowercase dotted name, at most 64 bytes) and the identifier must then name an entry in a
+server-authored descriptor table; there is no registration entry point, so a client can name
+an identifier but cannot add, rename or re-describe one, and an unknown or malformed
+identifier fails closed. Descriptors carry a display name and a kind and never grant
+authorization; they are not persisted. `ActionParameters` can only carry an application path
+— data, never a command, argv element, script, environment variable or working directory.
+Dispatch re-checks parameter well-formedness (non-empty, at most 4096 UTF-8 bytes, mirroring
+the `/launch` wire limit) and then requires exact membership in the catalog `Apps.list()`
+produced before `AppLaunchExecutor.schedule` performs the same `DispatchQueue.main.async`
+hand-off to `Apps.launch` that the route used before M2.3. Authorization therefore happens
+inside the boundary rather than in the route, so a caller that reaches the registry by any
+route is still authorized. The catalog resolver and the execution callback are injected,
+which is what makes the boundary testable without NSWorkspace. `POST /launch` is a thin
+adapter, and the adapter is one shared handler — `AppLaunchRoute.handle` — called
+identically by the production route switch and by the integration tests, so the tests cannot
+pass against wiring production does not use. It re-runs the M2.1 parameter check, asks the
+registry, and maps the outcome onto the historical response shape: the server names
+`app.launch`, the client supplies only data, and every rejection keeps the historical
+`404 unknown app`. `ok` still means accepted and dispatched, not activated. Only
+`app.launch` is registered; every other route remains legacy.
+
 **Traces.**
 
-- *Launch an app*: `POST /launch?k=…` `path=<app>` → `Apps.isKnown` → dispatch to the main
-  thread → `NSWorkspace.openApplication` → `ok`.
+- *Launch an app*: `POST /launch?k=…` `path=<app>` → M2.1 admission → `DeckRoute.match` →
+  `AppLaunchRoute.handle` (`DeckRoute.validateParameters` → `AppLaunchAdapter` →
+  `ActionRegistry.dispatch(app.launch, appPath)` → parameter check → `Apps.isKnown`) →
+  `AppLaunchExecutor.schedule` → main queue → `NSWorkspace.openApplication` → `ok`.
 - *Take note*: `POST /claude?k=…` `text=…&send=1` → dispatch to main → `claude://` deep
   link → after 2.0 s, if Claude is frontmost, `CGEvent` Return → `ok` returned immediately.
 - *Dashboard*: `GET /stats` every 2 s → `Stats.snapshot()` (blocking `queue.sync`) merged
@@ -251,11 +278,16 @@ apply before handlers (see §5).
 | GET | `/launcher` | yes | App list + selection | — | `{selected: [path]\|null, all: [{name,path}]}` | directory scan |
 | POST | `/launcher` | yes | Persist key selection | `paths` (newline-separated) | `{saved: n}` or `500` | writes `launcher.json`; unknown paths dropped |
 | GET | `/icon` | yes | App icon | `path` | PNG or `404` | renders + caches on main thread |
-| POST | `/launch` | yes | Open an app | `path` | `ok` or `404` | app activates |
+| POST | `/launch` | yes | Open an app through the action boundary | `path` | `ok` or `404` | app launch dispatched to the main queue (`ok` = accepted, not activated) |
 | POST | `/claude` | yes | New Claude chat / focus | `text`, `send=1` | `ok` | opens `claude://`; may press Return |
 | GET | `/camera.mjpg` | yes | MJPEG stream for OBS | — | `multipart/x-mixed-replace` | held open; registers a viewer |
 | GET | `/camera.jpg` | yes | Latest frame | — | JPEG (may be empty) | none |
 | — | `wss://host:<port+3>/` | handshake message | Camera + mic ingest | `'H'`+token, then `'V'`/`'A'` | none | updates frame cache; plays audio |
+
+The wire API is unchanged by M2.3: the same method, path, parameters, statuses and bodies.
+`POST /launch` is the **only** route that goes through `ActionRegistry`; `/media`, `/claude`,
+`/speedtest`, `/launcher` and `/icon` still validate and act inline in the route switch and
+are migrated only by a later, explicit slice.
 
 ## 8. macOS integrations
 
@@ -290,14 +322,19 @@ recognition, and trust for the OldPhoneDeck CA.
 launch or icon rendering (`Apps.isKnown`), re-filtering of config on save, no HTML
 injection (dynamic text goes through `textContent`), no user-controlled argv in any
 `Process`, fixed absolute binary paths, frame-drop backpressure on both media paths,
-`0600` on the token and CA key.
+`0600` on the token and CA key, and — since M2.3, accepted — one typed action
+boundary that resolves a server-authored identifier, validates parameters and authorizes
+against the Mac's own app catalog before a controlled executor runs. That boundary covers
+app launch only; the other action-shaped routes still validate inline in the switch.
 
 **Open risks carried from M1.** Each risk is owned by a milestone, and ownership is not
 interchangeable:
 
 - **M2 — minimum foundational hardening.** Request/body/header limits enforced *before*
   large buffering, basic connection and resource limits, and the minimum
-  action-authorization boundary that must exist before higher-consequence actions.
+  action-authorization boundary that must exist before higher-consequence actions. M2.1 and
+  M2.2 delivered the ingress and resource bounds; M2.3 (accepted after independent
+  review and Steering acceptance) delivers the action-authorization boundary for app launch.
 - **M5 — independent review and completion.** Codex T3 assessment of authentication,
   ingress, action authorization and process execution; remaining hardening; resolution or
   explicit acceptance of the remaining HIGH risks.
@@ -310,7 +347,7 @@ HIGH
 |---|---|
 | M2.1/M2.2 bound HTTP bodies, connections, media clients and buffering. M2.2 passed independent review and targeted physical camera validation; physical audio and continuous live MJPEG remain unverified. These minimum bounds are not full DoS protection. | `HTTPServer.swift`, `ResourceLimits.swift`, `PhoneMedia.swift` |
 | Cleartext HTTP carries the full-control token and all commands — **M5** | `:8045` route table |
-| One unscoped token authorises every action; no expiry, scopes or audit — **M5** (M2 adds the minimum authorization boundary) | `DeckRoute.admit`, wired by `main.swift` |
+| One unscoped token authorises every action; no expiry, scopes or audit — **M5**. M2.3 adds the minimum action-authorization boundary for app launch; the token itself still has one scope and authorises every legacy route. | `DeckRoute.admit`, `ActionRegistry`, wired by `main.swift` |
 
 MEDIUM
 
@@ -321,7 +358,8 @@ MEDIUM
 | Configuration is a bare `[String]` with no version; unparseable and absent are indistinguishable | `Launcher.selected()` |
 | Frontend geometry and `APP_SLOTS` are hardcoded | `index.html` `layout`, `renderKeys` |
 | One serial queue serves both listeners; full app-directory rescan per icon/launch request | `HTTPServer.queue`, `Apps.list()` |
-| Focused M2.1/M2.2 Swift Testing coverage only; hardware playback and broader regression/CI coverage remain absent | `Tests/oldphonedeckTests`, repository |
+| Action authorization compares exact catalog path **strings** and pins no filesystem object. Catalog entries may be symlinks, and the target could change before the asynchronous launch (TOCTOU). Inherited unchanged from the pre-M2.3 route; no HTTP-only exploit identified. Resolution or acceptance is **M5** — see the M2.3 implementation note in `docs/DECISIONS.md`. | `Apps.list/isKnown/launch`, `ActionRegistry.dispatch` |
+| Focused M2.1–M2.3 Swift Testing coverage only; hardware playback and broader regression/CI coverage remain absent | `Tests/oldphonedeckTests`, repository |
 | Accessibility key press is time-based (fixed 2 s delay + frontmost check) | `Claude.ask` |
 | TLS identity is re-issued only at startup, so an IP change degrades to HTTP-only | `LocalTLS.identity` |
 
@@ -384,27 +422,31 @@ One file. Inline CSS (~lines 16–240), markup, one IIFE of ES5.
 
 These are structural, not bugs to fix in passing:
 
-1. No action abstraction — each verb is a `case` in one `switch`, so a new capability
-   costs a new endpoint, a new client call and a new key type.
+1. One migrated action. `ActionRegistry` exists, but `app.launch` is its only registered
+   action; every other verb is still a `case` in one `switch`, so a new capability costs a
+   new endpoint, a new client call and a new key type until it is migrated onto the boundary.
 2. Configuration cannot express anything except "an ordered list of app paths".
 3. No collector abstraction — `Stats` and `Music` happen to follow the same pattern, but
    `/stats` composes them by hand.
 4. M2.1 bounds HTTP parsing and moves auth before bodies; M2.2 bounds connection/media
-   resources. The action boundary remains pending. One token still has one scope.
+   resources; M2.3 puts app launch behind an authorized action boundary (accepted).
+   One token still has one scope, and the legacy action-shaped routes are not migrated.
 5. The frontend has no data model for controls; the layout is arithmetic.
-6. Parser/admission, HTTP/media lifecycle, resource accounting and media bounds have Swift
-   Testing coverage. Hardware playback and other modules lack isolated tests; there is no CI.
+6. Parser/admission, HTTP/media lifecycle, resource accounting, media bounds and the action
+   boundary have Swift Testing coverage. Hardware playback and other modules lack isolated
+   tests; there is no CI.
 
 ## 13. PLANNED extension seams
 
-Approved direction (see `docs/DECISIONS.md` ADR-005 to ADR-010). Except for the
-explicitly marked M2.1 admission and M2.2 resource portions, these seams are **not implemented**.
+Approved direction (see `docs/DECISIONS.md` ADR-005 to ADR-010). Except for the explicitly
+marked M2.1 admission, M2.2 resource and M2.3 action-boundary portions, these seams are
+**not implemented**.
 
 | Seam | Milestone | Shape |
 |---|---|---|
-| **Action boundary** | M2 (foundational) | An internal representation of an approved action — identifier, display metadata, validated parameters, server-side execution allowlist. App launch, Shortcuts, developer and Git actions all become implementations of it. No arbitrary shell execution. |
+| **Action boundary** | M2 (foundational) — `app.launch` implemented and accepted in M2.3 | An internal representation of an approved action — identifier, display metadata, validated parameters, server-side execution allowlist. `ActionRegistry` now carries this for app launch only; Shortcuts, developer and Git actions become implementations of it in later slices. No arbitrary shell execution. |
 | **Versioned configuration** | M2 (foundational) | A versioned document under `~/.oldphonedeck` that can express controls, action types and metadata, with explicit migration that preserves the existing `launcher.json` selection. |
-| **Ingress / auth hardening** | M2.1 admission and M2.2 resource bounds implemented; remaining M2 → M5 | Bounded headers/body, early query-token auth, receive/auth deadlines, connection/media caps and bounded frame/audio buffering. Pending: M2.2 review/physical acceptance and Action authorization. M5: independent T3 assessment and remaining hardening. |
+| **Ingress / auth hardening** | M2.1 admission and M2.2 resource bounds implemented; remaining M2 → M5 | Bounded headers/body, early query-token auth, receive/auth deadlines, connection/media caps and bounded frame/audio buffering. M2.2 passed independent review and Steering acceptance. Action authorization exists for app launch (M2.3, accepted); the remaining routes and the unscoped token belong to M5's independent T3 assessment and hardening. |
 | **Collector boundary** | Just-in-time with M4 telemetry | Registry of collectors (each with its own queue) composed into one snapshot, so Git/agent status does not edit the route table. |
 | **Frontend data model** | M3 | Data-driven controls and widgets, layout described rather than hand-computed — while staying one ES5 file with no framework. |
 
