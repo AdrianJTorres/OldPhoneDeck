@@ -438,7 +438,7 @@ dashed name, ≤64 bytes, unique per document), an `action` identifier validated
 existing `ActionID` type, flat `String → String` `parameters`, and optional `presentation`
 metadata holding only a bounded `title`.
 
-Five rules carry the weight:
+Seven rules carry the weight:
 
 1. **Strict unknown keys.** A `version: 1` document with a key this build does not know is
    malformed. Such a document was not written by this binary, and ADR-007 exists precisely to
@@ -476,6 +476,35 @@ Five rules carry the weight:
    It serializes, then requires its own output to decode back to the value it was given, so the
    two directions cannot drift apart and an in-memory configuration that could not be read back
    is rejected before it is written rather than discovered on the next launch.
+6. **Reading is done by the codec's own strict RFC 8259 scanner, not by `JSONSerialization`.**
+   Two properties of configuration cannot be retro-fitted onto a lenient reader. The first is
+   syntax: `JSONSerialization` accepts a trailing comma (`{"version":1,"controls":[],}` and
+   `["/a.app",]` both parse), so a truncated or hand-edited file reads as a complete one, and it
+   collapses duplicate names into a dictionary, which makes `{"version":2,"version":1}` resolve
+   to whichever copy the reader keeps — an ambiguous version is the same nondeterminism rule 2
+   exists to remove. The scanner therefore rejects trailing commas, rejects a repeated name at
+   any level (`.duplicateKey`), requires the whole input to be one complete value, forbids a raw
+   control character inside a string, rejects ill-formed UTF-8 rather than substituting U+FFFD,
+   rejects a lone surrogate, and stops at a nesting bound of 64 (`.tooDeeplyNested`) so a hostile
+   document cannot exhaust the stack. Deciding control characters in the scanner rather than in
+   `isValidTitle` matters: a title rejects them anyway, but a `path` has no character rule at
+   all, so a syntax-level check is the only thing stopping `"a\0b"` from becoming a configured
+   application path that reaches dispatch. The second property is numbers. The scanner keeps a
+   number as its **exact literal text**, and `ExactJSONNumber` decides integrality on those
+   digits with no floating-point step anywhere, because precision lost before the codec sees the
+   token cannot be recovered after. So `1.0000000000000001` and `0.99999999999999999` are not
+   version 1, `9007199254740993` is reported as itself rather than as `9007199254740992`, and
+   `9223372036854775807` is an honest "your PhoneDeck is older than this file" instead of a
+   claim that the file is corrupt. Exactly-integral spellings stay accepted — `1.0`, `1e0`,
+   `0.1e1` and `1.5e1` (which is 15) — because JSON has one number type, and an absurd exponent
+   is rejected on its digit count before any zeros are materialized.
+7. **The byte cap is one claim measured in both directions.** The decoder accepts a document
+   only if the *canonical* form — pretty-printed with sorted keys, the one form the encoder
+   writes — also fits the cap. Pretty-printing expands a compact document, so measuring the cap
+   on the bytes as read let a configuration be valid on disk and impossible to save unchanged,
+   which is exactly the silent-failure shape ADR-007 exists to remove. Both directions call the
+   same `ConfigurationCanonicalForm` rather than the encoder calling the decoder and the decoder
+   calling the encoder, so the size contract cannot drift and the two directions cannot recurse.
 
 `ConfigurationError` cases carry no payload from the document — not even an offending key name —
 so configuration content cannot reach a log line or an HTTP response by way of an error,
@@ -483,13 +512,18 @@ matching `ActionOutcome`'s rule. The single exception is `.unsupportedVersion(fo
 the integer *is* the diagnosis. Document caps (1 MiB, 4096 controls) are corruption guards
 rather than product policy: both are far above anything `POST /launcher` can produce under its
 64 KiB body limit, and the 7-slot product limit stays in the client's `APP_SLOTS` until M2.5
-makes it a writer-side rule.
+makes it a writer-side rule. The 1 MiB cap is measured on the canonical form in both directions
+(rule 7), so it bounds what can be *stored*, not merely what can be read.
 
 Rejected alternatives: `Codable` (synthesized decoding ignores unknown keys, cannot express
 absent-versus-malformed without re-implementing the state enum, and puts user content into
-`DecodingError`; `JSONSerialization` is already the house idiom for both `launcher.json` and
-every API response); a reserved opaque `layout` subtree (rule 1); path-derived control ids
-(rule 4); and treating every non-`1` version as "from the future" (rule 2).
+`DecodingError`); `JSONSerialization` **for reading configuration** — it remains the house idiom
+for `launcher.json` and every API response, and this codec still uses it to *write* the canonical
+form, but it accepts trailing commas, collapses duplicate names into a dictionary and hands back
+numbers already widened to `Double`, none of which a caller can correct after the fact (rule 6);
+a reserved opaque `layout` subtree (rule 1); path-derived control ids (rule 4); treating every
+non-`1` version as "from the future" (rule 2); and measuring the byte cap on the document as read
+rather than on the form the codec would write (rule 7).
 
 **Consequences.** M2.4 delivers `Sources/oldphonedeck/Configuration.swift` as a pure codec plus
 migration, and nothing else. It takes `ConfigurationInput` (`.absent` / `.unreadable` /

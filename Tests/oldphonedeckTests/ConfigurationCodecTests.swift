@@ -222,7 +222,7 @@ struct VersionHandlingTests {
                       #"{"version":null,"controls":[]}"#, #"{"version":[1],"controls":[]}"#,
                       #"{"version":{},"controls":[]}"#, #"{"version":-0.5,"controls":[]}"#])
     func aNonIntegerVersionIsMalformed(_ json: String) {
-        // `JSONSerialization` bridges booleans to `NSNumber`, so `true` must not read as version 1.
+        // `true` and `false` are literals of their own, not numbers, so neither reads as version 1.
         #expect(decode(json) == .malformed(.invalidVersion))
     }
 
@@ -961,5 +961,329 @@ struct SecurityInvariantTests {
         let state = decode(document(control(id: "SENTINEL ID")))
         #expect(state == .malformed(.invalidControlID))
         #expect(!String(describing: state).contains("SENTINEL"))
+    }
+}
+
+// MARK: N. Strict JSON syntax
+
+/// Regression suite for the review finding that configuration was read through
+/// `JSONSerialization`, which is lenient about syntax RFC 8259 forbids. The divergences below each
+/// assert *both* halves: that the lenient reader still accepts the input, and that the codec does
+/// not. Removing the scanner therefore turns this suite red rather than quietly widening the
+/// format, and the assertion about `JSONSerialization` is what keeps the finding itself pinned.
+struct StrictJSONSyntaxTests {
+    /// A comma promises another element or member; nothing may follow it.
+    @Test(arguments: [#"{"version":1,"controls":[],}"#, #"{"version":1,"controls":[{},],}"#,
+                      #"["/a.app",]"#, #"[1,]"#])
+    func aTrailingCommaTheLenientReaderAcceptedIsMalformed(_ json: String) {
+        #expect((try? JSONSerialization.jsonObject(with: Data(json.utf8))) != nil)
+        #expect(decode(json) == .malformed(.notJSON))
+    }
+
+    @Test(arguments: [#"{"version":1,"controls":[,]}"#, #"{"version":1,"controls":[{},,{}]}"#,
+                      #"[,]"#, #"[1,,2]"#, #"{"version":1,,"controls":[]}"#])
+    func aCommaMustBeFollowedByAValueOrName(_ json: String) {
+        #expect(decode(json) == .malformed(.notJSON))
+    }
+
+    /// With one ordered parser there is no first-wins or last-wins rule to fall back on. The
+    /// lenient reader collapsed the pair into a dictionary and silently kept one of the two
+    /// versions, so which version a document had depended on the reader rather than on the bytes.
+    @Test func aDuplicateVersionIsRejectedRatherThanResolved() {
+        let json = #"{"version":2,"version":1,"controls":[]}"#
+        #expect((try? JSONSerialization.jsonObject(with: Data(json.utf8))) != nil)
+        #expect(decode(json) == .malformed(.duplicateKey))
+        // Names are scanned before versions are interpreted, so ambiguity outranks "from the
+        // future": guessing 2 here would be exactly the nondeterminism being removed.
+        #expect(decode(json) != .unsupportedVersion(found: 2))
+        #expect(decode(json) != .v1(DeckConfigurationV1(controls: [])))
+    }
+
+    @Test func aDuplicateNameIsRejectedAtEveryLevel() {
+        #expect(decode(#"{"version":1,"version":1,"controls":[]}"#) == .malformed(.duplicateKey))
+        #expect(decode(document(#"{"id":"a","id":"a","action":"app.quit"}"#))
+                == .malformed(.duplicateKey))
+        #expect(decode(document(control(action: "app.quit", parameters: #"{"k":"v","k":"w"}"#)))
+                == .malformed(.duplicateKey))
+        #expect(decode(document(control(action: "app.quit",
+                                        presentation: #"{"title":"a","title":"b"}"#)))
+                == .malformed(.duplicateKey))
+        #expect(decode(#"["/a.app","/a.app"]"#) == .legacy(["/a.app", "/a.app"]),
+                "Duplicated array elements are data, not ambiguous names")
+    }
+
+    /// Number syntax the grammar pins down. Each of these is a token a hand-edited file could
+    /// contain, and each is corruption rather than a value.
+    @Test(arguments: [#"{"version":01,"controls":[]}"#, #"{"version":+1,"controls":[]}"#,
+                      #"{"version":1.,"controls":[]}"#, #"{"version":.5,"controls":[]}"#,
+                      #"{"version":1e,"controls":[]}"#, #"{"version":1e+,"controls":[]}"#,
+                      #"{"version":0x10,"controls":[]}"#, #"{"version":NaN,"controls":[]}"#,
+                      #"{"version":Infinity,"controls":[]}"#, #"{"version":-Infinity,"controls":[]}"#,
+                      #"{"version":-.5,"controls":[]}"#, "{\"version\":-,\"controls\":[]}"])
+    func aNumberThatIsNotAJONumberIsMalformed(_ json: String) {
+        #expect(decode(json) == .malformed(.notJSON))
+    }
+
+    @Test(arguments: [#"{"a":"\x"}"#, #"{"a":"\'"}"#, #"{"a":"\0"}"#, #"{"a":"\u00"}"#,
+                      #"{"a":"\u12"}"#, #"{"a":"\ }"#, "{\"a\":\"\\\u{0A}\"}"])
+    func anEscapeTheGrammarDoesNotDefineIsMalformed(_ json: String) {
+        #expect(decode(json) == .malformed(.notJSON))
+    }
+
+    @Test func aCommentIsNotWhitespace() {
+        #expect(decode("// configuration\n{\"version\":1,\"controls\":[]}") == .malformed(.notJSON))
+        #expect(decode(#"{"version":1,"controls":[]}/* trailing */"#) == .malformed(.notJSON))
+    }
+
+    @Test func contentAfterACompleteDocumentIsMalformed() {
+        let complete = #"{"version":1,"controls":[]}"#
+        for trailing in ["x", "{}", "]", #""a""#] {
+            #expect(decode(complete + trailing) == .malformed(.notJSON))
+        }
+        // Whitespace after the value is insignificant, and the encoder's own output ends with a
+        // newline, so this must stay accepted.
+        #expect(decode(complete + " \n\t") == .v1(DeckConfigurationV1(controls: [])))
+    }
+
+    @Test(arguments: [UInt8(0x00), 0x01, 0x07, 0x09, 0x0A, 0x0D, 0x1F])
+    func aRawControlCharacterInsideAStringIsMalformed(_ byte: UInt8) {
+        // RFC 8259 requires a control character to be escaped. Deciding this in the scanner rather
+        // than in `isValidTitle` is what makes it a syntax fact: the same byte in a path, which
+        // has no character rule at all, is rejected too.
+        for body in [#"{"id":"a","action":"app.quit","presentation":{"title":"a"#,
+                     #"{"id":"a","action":"app.launch","parameters":{"path":"a"#] {
+            var bytes = Data(#"{"version":1,"controls":["#.utf8)
+            bytes.append(Data(body.utf8))
+            bytes.append(byte)
+            bytes.append(Data(#"b"}}]}"#.utf8))
+            #expect(ConfigurationDecoder.decode(.data(bytes)) == .malformed(.notJSON))
+        }
+    }
+
+    @Test func illFormedUTF8IsRejectedRatherThanReplaced() {
+        // A reader that substituted U+FFFD would turn a corrupt file into a valid-looking one
+        // holding a character the user never wrote.
+        var bytes = Data(#"{"version":1,"controls":[{"id":"a","action":"app.quit","presentation":{"title":"a"#.utf8)
+        bytes.append(contentsOf: [0xC3, 0x28])
+        bytes.append(Data(#""}}]}"#.utf8))
+        #expect(ConfigurationDecoder.decode(.data(bytes)) == .malformed(.notJSON))
+    }
+
+    @Test func aLoneSurrogateIsMalformedButAPairDecodes() {
+        #expect(decode(#"{"version":1,"controls":[],"k":"\ud800"}"#) == .malformed(.notJSON))
+        #expect(decode(#"{"version":1,"controls":[],"k":"\udc00"}"#) == .malformed(.notJSON))
+        // A high surrogate must be followed by a low one, or the pair is not a character.
+        #expect(decode(#"{"version":1,"controls":[],"k":"\ud800a"}"#) == .malformed(.notJSON))
+        #expect(decode(#"{"version":1,"controls":[],"k":"\ud800\ud800"}"#) == .malformed(.notJSON))
+    }
+
+    @Test func nestingDeeperThanTheBoundIsRejectedRatherThanRiskingTheStack() {
+        let depth = ConfigurationJSONScanner.maximumNestingDepth + 1
+        let json = String(repeating: "[", count: depth) + String(repeating: "]", count: depth)
+        // The lenient reader parses this depth happily, so the bound is the codec's own safety
+        // property when reading untrusted bytes, not something inherited from the framework.
+        #expect((try? JSONSerialization.jsonObject(with: Data(json.utf8))) != nil)
+        #expect(decode(json) == .malformed(.tooDeeplyNested))
+    }
+
+    @Test func nestingAtTheBoundIsNotADepthError() {
+        let depth = ConfigurationJSONScanner.maximumNestingDepth
+        let json = String(repeating: "[", count: depth) + String(repeating: "]", count: depth)
+        // The outermost array is a legacy document, so the failure is about the entry's type. That
+        // is what shows the bound itself did not fire one level early.
+        #expect(decode(json) == .malformed(.legacyEntryNotString))
+    }
+
+    @Test func everyEscapeTheGrammarDefinesDecodesToTheRightBytes() {
+        // A hand-written scanner has to earn the escapes it accepts; `\b` and `\f` in particular
+        // are easy to forget, and a surrogate pair has to become one code point rather than two.
+        let json = #"{"version":1,"controls":[{"id":"a","action":"app.launch","parameters":{"path":"\"\\\/\b\f\n\r\t\u0041\u00e9\ud83d\ude00"}}]}"#
+        guard case .v1(let configuration) = decode(json), let control = configuration.controls.first,
+              case .appPath(let path) = control.parameters else {
+            Issue.record("Expected the escapes to decode, got \(decode(json))")
+            return
+        }
+        #expect(path == "\"\\/\u{08}\u{0C}\n\r\tAé\u{1F600}")
+    }
+
+    @Test func insignificantWhitespaceIsStillInsignificant() {
+        #expect(decode("{\n\t\"version\" : 1 ,\n\t\"controls\" : [ ]\n}\n")
+                == .v1(DeckConfigurationV1(controls: [])))
+    }
+}
+
+// MARK: O. Exact version parsing
+
+/// Regression suite for the review finding that the version reached the codec as a `Double`. A
+/// widened number has already lost the digits that decide whether a document is this build's, from
+/// the future, or corrupt, and no later check can recover them.
+struct ExactVersionParsingTests {
+    /// Each of these widens to exactly `1.0`, so a floating-point reader accepted the document as
+    /// version 1. Their exact mathematical values are not integers.
+    @Test(arguments: ["1.0000000000000001", "0.99999999999999999", "1.00000000000000000000001",
+                      "0.9999999999999999999999", "1.0000000000000002"])
+    func aVersionThatOnlyLooksIntegralAfterRoundingIsMalformed(_ literal: String) {
+        #expect(decode("{\"version\":\(literal),\"controls\":[]}") == .malformed(.invalidVersion))
+        #expect(decode("{\"version\":\(literal),\"controls\":[]}") != .v1(DeckConfigurationV1(controls: [])))
+    }
+
+    @Test func twoVersionsThatWidenToTheSameDoubleAreDistinguished() {
+        // Both widen to 9007199254740992.0. Reporting the widened value would tell the user their
+        // file claimed a version it never did, and would make two different documents identical.
+        let odd = decode(#"{"version":9007199254740993,"controls":[]}"#)
+        let even = decode(#"{"version":9007199254740992,"controls":[]}"#)
+        #expect(odd == .unsupportedVersion(found: 9_007_199_254_740_993))
+        #expect(even == .unsupportedVersion(found: 9_007_199_254_740_992))
+        #expect(odd != even)
+    }
+
+    @Test func aVersionAtIntMaxIsReportedExactlyRatherThanAsCorrupt() {
+        // `Double(Int.max)` is 9223372036854775808, which is not representable as an `Int`, so a
+        // widened reader called a legitimate future version malformed and told the user to repair
+        // a file that was merely newer.
+        #expect(decode(#"{"version":9223372036854775807,"controls":[]}"#)
+                == .unsupportedVersion(found: 9_223_372_036_854_775_807))
+    }
+
+    @Test func aVersionPastIntMaxIsMalformed() {
+        #expect(decode(#"{"version":9223372036854775808,"controls":[]}"#) == .malformed(.invalidVersion))
+        #expect(decode(#"{"version":99999999999999999999,"controls":[]}"#) == .malformed(.invalidVersion))
+        #expect(decode(#"{"version":-9223372036854775809,"controls":[]}"#) == .malformed(.invalidVersion))
+    }
+
+    @Test func aVersionAtIntMinIsMalformedNotFuture() {
+        #expect(decode(#"{"version":-9223372036854775808,"controls":[]}"#) == .malformed(.invalidVersion))
+    }
+
+    /// JSON has one number type, so an exactly integral value in any spelling is that integer.
+    @Test func anExactlyIntegralVersionInAnySpellingIsAccepted() {
+        for literal in ["1", "1.0", "1.000", "1e0", "1E0", "1.0e0", "0.1e1", "10e-1", "1e+0"] {
+            #expect(decode("{\"version\":\(literal),\"controls\":[]}") == .v1(DeckConfigurationV1(controls: [])),
+                    "\(literal) is exactly 1")
+        }
+    }
+
+    @Test func anExactlyIntegralValueInANonIntegralSpellingIsStillAVersionNumber() {
+        // 1.5e1 is exactly 15, so it is a real version and the honest diagnosis is "upgrade".
+        #expect(decode(#"{"version":1.5e1,"controls":[]}"#) == .unsupportedVersion(found: 15))
+        #expect(decode(#"{"version":1.50e001,"controls":[]}"#) == .unsupportedVersion(found: 15))
+    }
+
+    @Test(arguments: ["1.5", "0.5", "1e-1", "2.5", "0.0000001", "1.0000000000000000000001"])
+    func aFractionalVersionIsMalformed(_ literal: String) {
+        #expect(decode("{\"version\":\(literal),\"controls\":[]}") == .malformed(.invalidVersion))
+    }
+
+    @Test func negativeZeroIsVersionZeroAndThereforeMalformed() {
+        // Negative zero is the integer 0, and no version below 1 ever existed.
+        for literal in ["-0", "-0.0", "-0e0"] {
+            #expect(decode("{\"version\":\(literal),\"controls\":[]}") == .malformed(.invalidVersion))
+        }
+    }
+
+    @Test func anAbsurdExponentIsRejectedWithoutExpandingIt() {
+        // The literal is a few bytes long. A reader that materialized the value would try to
+        // allocate a billion digits, so a short corrupt file becomes a way to exhaust memory.
+        // Exactness is decided on the digits, with the length bounded before any zeros are added.
+        for literal in ["1e999999999", "-1e999999999", "1.5e999999999", "1e99999999999999999999"] {
+            #expect(decode("{\"version\":\(literal),\"controls\":[]}") == .malformed(.invalidVersion),
+                    "\(literal) cannot be an Int")
+        }
+    }
+}
+
+// MARK: P. Canonical size invariant
+
+/// Regression suite for the review finding that the two directions disagreed about size. The byte
+/// cap was measured on the document as read, while the encoder wrote a pretty-printed form that is
+/// always larger, so a configuration could be valid on disk and impossible to save unchanged.
+struct CanonicalSizeInvariantTests {
+    /// The document below fits the cap as read and overflows it once written. Both premises are
+    /// asserted, so the test cannot pass by having drifted out of the interesting range.
+    @Test func aDocumentOnlyItsCanonicalFormOverflowsIsMalformed() {
+        let count = ConfigurationDecoder.maximumControlCount
+        let value = String(repeating: "a", count: 186)
+        var compact = #"{"version":1,"controls":["#
+        var controls: [DeckControl] = []
+        controls.reserveCapacity(count)
+        for index in 1...count {
+            let id = String(format: "a%04d", index)
+            compact += "{\"id\":\"\(id)\",\"action\":\"app.quit\",\"parameters\":{\"k\":\"\(value)\"}}"
+            if index < count { compact += "," }
+            controls.append(unmodeledControl(id: id, action: "app.quit", parameters: ["k": value]))
+        }
+        compact += "]}"
+        let bytes = Data(compact.utf8)
+
+        let cap = ConfigurationDecoder.maximumDocumentBytes
+        #expect(bytes.count <= cap, "the document as read must fit, or this proves nothing")
+        guard let canonical = ConfigurationCanonicalForm.data(DeckConfigurationV1(controls: controls)) else {
+            Issue.record("Expected the canonical form to serialize")
+            return
+        }
+        #expect(canonical.count > cap, "the form the codec would write must overflow")
+
+        // Matched by case rather than by whole-state equality, so a failure names what happened
+        // instead of printing all 4096 controls the document decoded to.
+        guard case .malformed(let error) = ConfigurationDecoder.decode(.data(bytes)) else {
+            Issue.record("Expected a document only its canonical form overflows to be rejected")
+            return
+        }
+        #expect(error == .documentTooLarge)
+        // The same content just under the boundary still reads, so the check is about the cap and
+        // not a blanket rejection of dense documents.
+        #expect(decode(document(control(action: "app.quit", parameters: "{\"k\":\"\(value)\"}")))
+                != .malformed(.documentTooLarge))
+    }
+
+    /// The other half of the invariant: nothing the decoder accepts is unsaveable.
+    @Test func everyAcceptedDocumentCanBeWrittenBackInsideTheCap() {
+        let widest = String(repeating: "a", count: ControlParameters.maximumUnmodeledValueBytes)
+        let accepted = [
+            document(""),
+            document(control()),
+            document(control(presentation: "{\"title\":\"Safari\"}")),
+            document(control(action: "app.quit", parameters: "{\"k\":\"\(widest)\"}")),
+            document((1...ConfigurationDecoder.maximumControlCount)
+                .map { control(id: "a\($0)") }.joined(separator: ",")),
+        ]
+        for json in accepted {
+            guard case .v1(let configuration) = decode(json) else {
+                Issue.record("Expected an accepted document, got \(decode(json))")
+                continue
+            }
+            switch ConfigurationEncoder.verifiedData(configuration) {
+            case .success(let data):
+                #expect(data.count <= ConfigurationDecoder.maximumDocumentBytes)
+            case .failure(let error):
+                Issue.record("An accepted document could not be written back: \(error)")
+            }
+        }
+    }
+
+    /// The decoder's size check has to measure the bytes the encoder actually writes. If the two
+    /// ever used different forms, "fits when read" and "fits when written" would come apart again.
+    @Test func theEncoderWritesExactlyTheFormTheDecoderMeasures() {
+        let configuration = DeckConfigurationV1(controls: [appControl(title: "Safari"),
+                                                           unmodeledControl(parameters: ["k": "v"])])
+        guard let canonical = ConfigurationCanonicalForm.data(configuration),
+              case .success(let encoded) = ConfigurationEncoder.verifiedData(configuration) else {
+            Issue.record("Expected both directions to produce bytes")
+            return
+        }
+        #expect(canonical == encoded)
+        #expect(ConfigurationDecoder.decode(.data(canonical)) == .v1(configuration))
+    }
+
+    /// Migration is held to the same canonical bound, so a legacy selection can never migrate into
+    /// a document that a later read would reject. It fails loudly instead of truncating.
+    @Test func migrationIsHeldToTheCanonicalBoundToo() {
+        let widest = path(ofBytes: ControlParameters.maximumPathBytes)
+        let selection = Array(repeating: widest, count: ConfigurationDecoder.maximumControlCount)
+        // Every entry is individually legal and the count is at, not over, its cap, so the only
+        // thing wrong with the result is the size of the document it would make.
+        #expect(widest.utf8.count <= ControlParameters.maximumPathBytes)
+        #expect(selection.count <= ConfigurationDecoder.maximumControlCount)
+        #expect(ConfigurationMigrator.migrateToV1(selection) == .failure(.documentTooLarge))
     }
 }

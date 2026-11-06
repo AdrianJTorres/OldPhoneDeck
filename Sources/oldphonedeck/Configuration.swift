@@ -132,6 +132,13 @@ struct DeckConfigurationV1: Equatable {
 /// diagnostics: the file is on the Mac's own disk and can be read.
 enum ConfigurationError: Error, Equatable {
     case notJSON
+    /// The document nests deeper than any V1 value can, so the scanner stops rather than risking
+    /// the stack. A depth bound is a safety property of reading untrusted bytes, not a schema cap.
+    case tooDeeplyNested
+    /// RFC 8259 says names within an object SHOULD be unique. With one ordered parser there is no
+    /// first-wins/last-wins rule to fall back on, and an ambiguous `version` would reintroduce
+    /// exactly the nondeterminism exact-number parsing removes.
+    case duplicateKey
     /// The value model produced something `JSONSerialization` will not write. Unreachable for a V1
     /// value, whose members are strings, one integer, arrays and dictionaries; it exists so
     /// `verifiedData` stays total rather than trapping.
@@ -182,6 +189,407 @@ enum ConfigurationState: Equatable {
     case unsupportedVersion(found: Int)
 }
 
+// MARK: Strict JSON
+
+/// One parsed JSON value.
+///
+/// Numbers are kept as their **exact literal text**. That is the only form that has not already
+/// been rounded: `JSONSerialization` returns an `NSNumber` whose `Double` has lost the difference
+/// between `1` and `1.0000000000000001`, and between `9007199254740993` and `9007199254740992`.
+/// Recovering precision after that point is impossible, so the literal is what travels forward.
+enum ConfigurationJSONValue {
+    /// Ordered name/value pairs. A dictionary would collapse duplicate names silently and make
+    /// which `version` wins depend on hash ordering.
+    case object([(String, ConfigurationJSONValue)])
+    case array([ConfigurationJSONValue])
+    case string(String)
+    case number(String)
+    case bool(Bool)
+    case null
+
+    var objectMembers: [(String, ConfigurationJSONValue)]? {
+        if case .object(let members) = self { return members }
+        return nil
+    }
+
+    /// Value of a member by name. Names are unique — the scanner rejects duplicates — so there is
+    /// no first-wins/last-wins ambiguity to guess about.
+    func member(_ name: String) -> ConfigurationJSONValue? {
+        objectMembers?.first { $0.0 == name }?.1
+    }
+}
+
+/// A strict RFC 8259 scanner over the document's own bytes.
+///
+/// `JSONSerialization` is deliberately not used for reading configuration: it accepts trailing
+/// commas, and it converts numbers before any caller sees the original token. Both of those are
+/// review findings that cannot be fixed on top of it, and adding `Decimal` after the fact would
+/// only re-derive a value that has already been rounded. One scanner decides syntax and retains
+/// the numeric text, which is also why there are not two parsers here free to disagree.
+struct ConfigurationJSONScanner {
+    /// No V1 value nests deeper than four levels (document, controls, control, parameters). The
+    /// bound exists so a deeply nested document cannot exhaust the stack while parsing; exceeding
+    /// it is a rejection rather than a crash.
+    static let maximumNestingDepth = 64
+
+    private let bytes: [UInt8]
+    private var index = 0
+    private var depth = 0
+
+    init(_ data: Data) { bytes = [UInt8](data) }
+
+    /// Parses exactly one complete JSON value and requires the whole input to be consumed, so a
+    /// document cannot smuggle trailing content past the parser.
+    mutating func scanDocument() -> Result<ConfigurationJSONValue, ConfigurationError> {
+        do {
+            let value = try scanValue()
+            skipWhitespace()
+            guard index == bytes.count else { throw ScanError.syntax }
+            return .success(value)
+        } catch let error as ScanError {
+            switch error {
+            case .syntax: return .failure(.notJSON)
+            case .tooDeep: return .failure(.tooDeeplyNested)
+            case .duplicateKey: return .failure(.duplicateKey)
+            }
+        } catch {
+            // `ScanError` is the only type thrown above; this arm exists because Swift's `throws`
+            // is untyped, not because another error is expected.
+            return .failure(.notJSON)
+        }
+    }
+
+    private enum ScanError: Error { case syntax, tooDeep, duplicateKey }
+
+    private func current() -> UInt8? { index < bytes.count ? bytes[index] : nil }
+
+    private mutating func skipWhitespace() {
+        while let byte = current(), byte == 0x20 || byte == 0x09 || byte == 0x0A || byte == 0x0D {
+            index += 1
+        }
+    }
+
+    private mutating func enter() throws {
+        depth += 1
+        guard depth <= Self.maximumNestingDepth else { throw ScanError.tooDeep }
+    }
+
+    private mutating func scanValue() throws -> ConfigurationJSONValue {
+        skipWhitespace()
+        guard let byte = current() else { throw ScanError.syntax }
+        switch byte {
+        case 0x7B: return try scanObject()                                        // {
+        case 0x5B: return try scanArray()                                         // [
+        case 0x22: return .string(try scanString())                               // "
+        case 0x74: return try scanLiteral("true", .bool(true))
+        case 0x66: return try scanLiteral("false", .bool(false))
+        case 0x6E: return try scanLiteral("null", .null)
+        case 0x2D, 0x30...0x39: return try scanNumber()                           // - 0...9
+        default: throw ScanError.syntax
+        }
+    }
+
+    private mutating func scanLiteral(_ text: String, _ value: ConfigurationJSONValue)
+        throws -> ConfigurationJSONValue {
+        let literal = [UInt8](text.utf8)
+        guard index + literal.count <= bytes.count,
+              bytes[index..<(index + literal.count)] == ArraySlice(literal) else { throw ScanError.syntax }
+        index += literal.count
+        return value
+    }
+
+    private mutating func scanObject() throws -> ConfigurationJSONValue {
+        try enter()
+        defer { depth -= 1 }
+        index += 1
+        var members: [(String, ConfigurationJSONValue)] = []
+        skipWhitespace()
+        if current() == 0x7D { index += 1; return .object(members) }               // }
+        while true {
+            // A name must start every member, so `,}` fails here rather than being waved through.
+            skipWhitespace()
+            guard current() == 0x22 else { throw ScanError.syntax }
+            let name = try scanString()
+            guard members.allSatisfy({ $0.0 != name }) else { throw ScanError.duplicateKey }
+            skipWhitespace()
+            guard current() == 0x3A else { throw ScanError.syntax }                // :
+            index += 1
+            members.append((name, try scanValue()))
+            skipWhitespace()
+            switch current() {
+            case 0x2C: index += 1                                                  // ,
+            case 0x7D: index += 1; return .object(members)
+            default: throw ScanError.syntax
+            }
+        }
+    }
+
+    private mutating func scanArray() throws -> ConfigurationJSONValue {
+        try enter()
+        defer { depth -= 1 }
+        index += 1
+        var elements: [ConfigurationJSONValue] = []
+        skipWhitespace()
+        if current() == 0x5D { index += 1; return .array(elements) }               // ]
+        while true {
+            // A value must follow every comma, so `,]` and `,,` fail inside `scanValue`.
+            elements.append(try scanValue())
+            skipWhitespace()
+            switch current() {
+            case 0x2C: index += 1
+            case 0x5D: index += 1; return .array(elements)
+            default: throw ScanError.syntax
+            }
+        }
+    }
+
+    private mutating func scanString() throws -> String {
+        guard current() == 0x22 else { throw ScanError.syntax }
+        index += 1
+        var utf8: [UInt8] = []
+        while true {
+            guard let byte = current() else { throw ScanError.syntax }
+            if byte == 0x22 { index += 1; break }
+            if byte == 0x5C {                                                      // \
+                index += 1
+                guard let escape = current() else { throw ScanError.syntax }
+                index += 1
+                switch escape {
+                case 0x22: utf8.append(0x22)                                       // "
+                case 0x5C: utf8.append(0x5C)                                       // \
+                case 0x2F: utf8.append(0x2F)                                       // /
+                case 0x62: utf8.append(0x08)                                       // b
+                case 0x66: utf8.append(0x0C)                                       // f
+                case 0x6E: utf8.append(0x0A)                                       // n
+                case 0x72: utf8.append(0x0D)                                       // r
+                case 0x74: utf8.append(0x09)                                       // t
+                case 0x75: try scanUnicodeEscape(into: &utf8)                      // u
+                default: throw ScanError.syntax                                    // \x, \', \0 …
+                }
+                continue
+            }
+            // RFC 8259 forbids a raw control character inside a string; it must be escaped.
+            guard byte >= 0x20 else { throw ScanError.syntax }
+            utf8.append(byte)
+            index += 1
+        }
+        // `String(bytes:encoding:)` returns nil for ill-formed UTF-8 rather than substituting
+        // U+FFFD, so invalid byte sequences are a syntax error instead of silent replacement.
+        guard let text = String(bytes: utf8, encoding: .utf8) else { throw ScanError.syntax }
+        return text
+    }
+
+    private mutating func scanUnicodeEscape(into utf8: inout [UInt8]) throws {
+        let high = try scanHex4()
+        if (0xDC00...0xDFFF).contains(high) { throw ScanError.syntax }             // lone low surrogate
+        guard (0xD800...0xDBFF).contains(high) else {
+            Self.appendUTF8(UInt32(high), to: &utf8)
+            return
+        }
+        // A high surrogate must be followed by a low one, or the pair is not a character.
+        guard index + 1 < bytes.count, bytes[index] == 0x5C, bytes[index + 1] == 0x75 else {
+            throw ScanError.syntax
+        }
+        index += 2
+        let low = try scanHex4()
+        guard (0xDC00...0xDFFF).contains(low) else { throw ScanError.syntax }
+        Self.appendUTF8(UInt32(0x10000 + ((high - 0xD800) << 10) + (low - 0xDC00)), to: &utf8)
+    }
+
+    /// Appends the UTF-8 encoding of a code point.
+    ///
+    /// Written directly rather than through `Unicode.Scalar`, whose non-failable initializer traps
+    /// on a surrogate: this parser reads untrusted bytes, so an invalid value has to be a syntax
+    /// error and never a crash. Callers have already rejected D800…DFFF, and a decoded pair cannot
+    /// exceed U+10FFFF, so every code point reaching here is encodable. The finished string is
+    /// still validated as a whole by `String(bytes:encoding:)`.
+    private static func appendUTF8(_ codePoint: UInt32, to utf8: inout [UInt8]) {
+        switch codePoint {
+        case ..<0x80:
+            utf8.append(UInt8(codePoint))
+        case ..<0x800:
+            utf8.append(0xC0 | UInt8(codePoint >> 6))
+            utf8.append(0x80 | UInt8(codePoint & 0x3F))
+        case ..<0x10000:
+            utf8.append(0xE0 | UInt8(codePoint >> 12))
+            utf8.append(0x80 | UInt8((codePoint >> 6) & 0x3F))
+            utf8.append(0x80 | UInt8(codePoint & 0x3F))
+        default:
+            utf8.append(0xF0 | UInt8(codePoint >> 18))
+            utf8.append(0x80 | UInt8((codePoint >> 12) & 0x3F))
+            utf8.append(0x80 | UInt8((codePoint >> 6) & 0x3F))
+            utf8.append(0x80 | UInt8(codePoint & 0x3F))
+        }
+    }
+
+    private mutating func scanHex4() throws -> Int {
+        guard index + 3 < bytes.count else { throw ScanError.syntax }
+        var value = 0
+        for offset in 0..<4 {
+            let byte = bytes[index + offset]
+            switch byte {
+            case 0x30...0x39: value = value * 16 + Int(byte - 0x30)
+            case 0x41...0x46: value = value * 16 + Int(byte - 0x37)                // A...F
+            case 0x61...0x66: value = value * 16 + Int(byte - 0x57)                // a...f
+            default: throw ScanError.syntax
+            }
+        }
+        index += 4
+        return value
+    }
+
+    private mutating func scanNumber() throws -> ConfigurationJSONValue {
+        let start = index
+        if current() == 0x2D { index += 1 }                                        // -
+        guard let first = current(), (0x30...0x39).contains(first) else { throw ScanError.syntax }
+        if first == 0x30 {
+            index += 1
+            // `01` is not JSON: a leading zero may only be the whole integer part.
+            if let next = current(), (0x30...0x39).contains(next) { throw ScanError.syntax }
+        } else {
+            while let byte = current(), (0x30...0x39).contains(byte) { index += 1 }
+        }
+        if current() == 0x2E {                                                     // .
+            index += 1
+            let fractionStart = index
+            while let byte = current(), (0x30...0x39).contains(byte) { index += 1 }
+            guard index > fractionStart else { throw ScanError.syntax }
+        }
+        if let exponent = current(), exponent == 0x65 || exponent == 0x45 {        // e E
+            index += 1
+            if let sign = current(), sign == 0x2B || sign == 0x2D { index += 1 }    // + -
+            let exponentStart = index
+            while let byte = current(), (0x30...0x39).contains(byte) { index += 1 }
+            guard index > exponentStart else { throw ScanError.syntax }
+        }
+        return .number(String(decoding: bytes[start..<index], as: UTF8.self))
+    }
+}
+
+/// Exact interpretation of a JSON number's literal text, with no floating-point step anywhere.
+enum ExactJSONNumber {
+    /// The exact mathematical value as an `Int`, or nil when the literal is not an integer or does
+    /// not fit `Int`. Nothing here widens through `Double` or `NSNumber`, so `1.0000000000000001`
+    /// is not `1`, `0.99999999999999999` is not `1`, and `9007199254740993` keeps every digit
+    /// instead of arriving as `9007199254740992`.
+    ///
+    /// A token is integral only when its exact mathematical value is an integer, so `1.0` and
+    /// `1e0` and `1.5e1` are integral while `1.5` and `1e-1` are not.
+    static func exactInteger(_ literal: String) -> Int? {
+        let bytes = [UInt8](literal.utf8)
+        var cursor = 0
+        var negative = false
+        if cursor < bytes.count, bytes[cursor] == 0x2D { negative = true; cursor += 1 }
+
+        var mantissa: [UInt8] = []
+        var fractionCount = 0
+        while cursor < bytes.count, isDigit(bytes[cursor]) { mantissa.append(bytes[cursor]); cursor += 1 }
+        guard !mantissa.isEmpty else { return nil }
+        if cursor < bytes.count, bytes[cursor] == 0x2E {
+            cursor += 1
+            let fractionStart = mantissa.count
+            while cursor < bytes.count, isDigit(bytes[cursor]) { mantissa.append(bytes[cursor]); cursor += 1 }
+            fractionCount = mantissa.count - fractionStart
+            guard fractionCount > 0 else { return nil }
+        }
+        var exponent = 0
+        if cursor < bytes.count, bytes[cursor] == 0x65 || bytes[cursor] == 0x45 {
+            cursor += 1
+            var exponentNegative = false
+            if cursor < bytes.count, bytes[cursor] == 0x2B || bytes[cursor] == 0x2D {
+                exponentNegative = bytes[cursor] == 0x2D
+                cursor += 1
+            }
+            var digits = 0
+            while cursor < bytes.count, isDigit(bytes[cursor]) {
+                // Saturate rather than overflow: an exponent this large cannot produce a value
+                // inside `Int`, and saturating still yields the right answer without trapping.
+                if exponent < 1_000_000 { exponent = exponent * 10 + Int(bytes[cursor] - 0x30) }
+                digits += 1
+                cursor += 1
+            }
+            guard digits > 0 else { return nil }
+            if exponentNegative { exponent = -exponent }
+        }
+        // The scanner already guaranteed the grammar; this keeps the function total on its own.
+        guard cursor == bytes.count else { return nil }
+
+        // Exact value = mantissa × 10^(exponent − fractionCount). Move the point inside the digit
+        // string; the value is an integer only when nothing significant lands after it.
+        let shift = exponent - fractionCount
+        let integerDigits: [UInt8]
+        if shift >= 0 {
+            let whole = dropLeadingZeros(mantissa)
+            if whole.isEmpty { return 0 }
+            // Length is checked before any zeros are appended, so `1e999999999` cannot allocate.
+            guard whole.count + shift <= 19 else { return nil }
+            integerDigits = whole + [UInt8](repeating: 0x30, count: shift)
+        } else {
+            let fractional = -shift
+            guard fractional < mantissa.count else {
+                // Every significant digit sits after the point: integral only if the value is zero.
+                return mantissa.allSatisfy({ $0 == 0x30 }) ? 0 : nil
+            }
+            guard mantissa.suffix(fractional).allSatisfy({ $0 == 0x30 }) else { return nil }
+            integerDigits = [UInt8](mantissa.prefix(mantissa.count - fractional))
+        }
+        let whole = dropLeadingZeros(integerDigits)
+        if whole.isEmpty { return 0 }
+        // 19 digits is the widest an `Int` can be; `Int(_:)` then rejects the few 19-digit values
+        // that still overflow, returning nil rather than trapping. That is what makes
+        // `9223372036854775807` exact and `9223372036854775808` a clean rejection.
+        guard whole.count <= 19 else { return nil }
+        return Int((negative ? "-" : "") + String(decoding: whole, as: UTF8.self))
+    }
+
+    private static func isDigit(_ byte: UInt8) -> Bool { (0x30...0x39).contains(byte) }
+
+    private static func dropLeadingZeros(_ digits: [UInt8]) -> [UInt8] {
+        var start = 0
+        while start < digits.count, digits[start] == 0x30 { start += 1 }
+        return [UInt8](digits[start...])
+    }
+}
+
+// MARK: Canonical form
+
+/// The one canonical wire form of a V1 document: pretty-printed with sorted keys, which is also
+/// what `Launcher.save` already writes for the legacy file.
+///
+/// Both directions use it, so "fits when read" and "fits when written" are the same claim about
+/// the same bytes. That is what makes the size contract hold: a document the decoder accepts can
+/// always be encoded unchanged, instead of being valid on disk one way and unsaveable the other.
+enum ConfigurationCanonicalForm {
+    static func data(_ configuration: DeckConfigurationV1) -> Data? {
+        try? JSONSerialization.data(withJSONObject: documentObject(configuration),
+                                    options: [.prettyPrinted, .sortedKeys])
+    }
+
+    private static func documentObject(_ configuration: DeckConfigurationV1) -> [String: Any] {
+        ["version": DeckConfigurationV1.version,
+         "controls": configuration.controls.map { controlObject($0) }]
+    }
+
+    private static func controlObject(_ control: DeckControl) -> [String: Any] {
+        var object: [String: Any] = [
+            "id": control.id.rawValue,
+            "action": control.action.rawValue,
+            "parameters": parametersObject(control.parameters),
+        ]
+        // Omitted rather than written as null, so a control with no label round-trips as a control
+        // with no `presentation` key.
+        if let title = control.presentation.title { object["presentation"] = ["title": title] }
+        return object
+    }
+
+    private static func parametersObject(_ parameters: ControlParameters) -> [String: String] {
+        switch parameters {
+        case .appPath(let path): return ["path": path]
+        case .unmodeled(let values): return values
+        }
+    }
+}
+
 // MARK: Decoder
 
 /// Pure decoder: bytes to states. Its only input is `ConfigurationInput`, which is also why the
@@ -209,42 +617,58 @@ enum ConfigurationDecoder {
     private static func decode(data: Data) -> ConfigurationState {
         // Checked on the bytes, before parsing, so an oversized document is never deserialized.
         guard data.count <= maximumDocumentBytes else { return .malformed(.documentTooLarge) }
-        guard let object = try? JSONSerialization.jsonObject(with: data) else { return .malformed(.notJSON) }
+        var scanner = ConfigurationJSONScanner(data)
+        let root: ConfigurationJSONValue
+        switch scanner.scanDocument() {
+        case .success(let value): root = value
+        case .failure(let error): return .malformed(error)
+        }
 
         // A JSON array is a legacy launcher document; a JSON object is a versioned one. The root
-        // type alone discriminates, so no sentinel key or probing is needed.
-        if let array = object as? [Any] { return decode(legacyArray: array) }
-        // Without `.fragmentsAllowed`, `jsonObject` yields only arrays and dictionaries, so this
-        // guard satisfies the compiler rather than catching a runtime case.
-        guard let root = object as? [String: Any] else { return .malformed(.notJSON) }
+        // type alone discriminates, so no sentinel key or probing is needed. A top-level scalar is
+        // valid JSON but is not a configuration document.
+        if case .array(let elements) = root { return decode(legacyArray: elements) }
+        guard case .object(let members) = root else { return .malformed(.notJSON) }
 
         // The version is identified before any V1 structural or unknown-key check. A document from
         // a newer PhoneDeck will legitimately carry keys V1 has never heard of, and reporting
         // "unknown key" would describe a newer file as a corrupt one.
-        guard let versionValue = root["version"] else { return .malformed(.missingVersion) }
-        guard let version = integerValue(versionValue) else { return .malformed(.invalidVersion) }
+        guard let versionValue = root.member("version") else { return .malformed(.missingVersion) }
+        // The version comes from the number's own literal text, never from a `Double` or an
+        // `NSNumber` that has already been rounded. See `ExactJSONNumber`.
+        guard case .number(let literal) = versionValue,
+              let version = ExactJSONNumber.exactInteger(literal) else { return .malformed(.invalidVersion) }
         guard version <= DeckConfigurationV1.version else { return .unsupportedVersion(found: version) }
         // No version below 1 ever existed: a legacy document is a bare array with no version at
         // all. So 0 and -3 are corrupt, not "from the future".
         guard version == DeckConfigurationV1.version else { return .malformed(.invalidVersion) }
 
-        guard root.keys.allSatisfy({ documentKeys.contains($0) }) else { return .malformed(.unknownKey) }
-        guard let controlsValue = root["controls"] else { return .malformed(.missingControls) }
-        guard let controlArray = controlsValue as? [Any] else { return .malformed(.controlsNotArray) }
+        guard members.allSatisfy({ documentKeys.contains($0.0) }) else { return .malformed(.unknownKey) }
+        guard let controlsValue = root.member("controls") else { return .malformed(.missingControls) }
+        guard case .array(let controlArray) = controlsValue else { return .malformed(.controlsNotArray) }
         guard controlArray.count <= maximumControlCount else { return .malformed(.tooManyControls) }
 
         switch controls(controlArray) {
-        case .success(let controls): return .v1(DeckConfigurationV1(controls: controls))
+        case .success(let controls):
+            let configuration = DeckConfigurationV1(controls: controls)
+            // Canonical size contract: a document is accepted only if the form this codec would
+            // write it back in also fits the cap. Pretty-printing expands a compact document, so
+            // without this check a configuration can be valid when read and impossible to save
+            // unchanged. Uses the shared canonical form rather than calling the encoder, so the
+            // two directions do not recurse into each other.
+            guard let canonical = ConfigurationCanonicalForm.data(configuration),
+                  canonical.count <= maximumDocumentBytes else { return .malformed(.documentTooLarge) }
+            return .v1(configuration)
         case .failure(let error): return .malformed(error)
         }
     }
 
-    private static func decode(legacyArray array: [Any]) -> ConfigurationState {
+    private static func decode(legacyArray array: [ConfigurationJSONValue]) -> ConfigurationState {
         guard array.count <= maximumControlCount else { return .malformed(.tooManyControls) }
         var paths: [String] = []
         paths.reserveCapacity(array.count)
         for element in array {
-            guard let path = element as? String else { return .malformed(.legacyEntryNotString) }
+            guard case .string(let path) = element else { return .malformed(.legacyEntryNotString) }
             paths.append(path)
         }
         // Order, duplicates, empty entries and an intentionally empty array are all preserved
@@ -253,13 +677,13 @@ enum ConfigurationDecoder {
         return .legacy(paths)
     }
 
-    private static func controls(_ array: [Any]) -> Result<[DeckControl], ConfigurationError> {
+    private static func controls(_ array: [ConfigurationJSONValue]) -> Result<[DeckControl], ConfigurationError> {
         var controls: [DeckControl] = []
         controls.reserveCapacity(array.count)
         var ids = Set<ControlID>()
         for element in array {
-            guard let object = element as? [String: Any] else { return .failure(.controlNotObject) }
-            switch control(object) {
+            guard case .object(let members) = element else { return .failure(.controlNotObject) }
+            switch control(members) {
             case .failure(let error): return .failure(error)
             case .success(let decoded):
                 // Uniqueness is a document-level property, so it is checked here rather than by
@@ -271,22 +695,23 @@ enum ConfigurationDecoder {
         return .success(controls)
     }
 
-    private static func control(_ object: [String: Any]) -> Result<DeckControl, ConfigurationError> {
-        guard object.keys.allSatisfy({ controlKeys.contains($0) }) else { return .failure(.unknownKey) }
-        guard let idValue = object["id"] else { return .failure(.missingControlID) }
-        guard let idText = idValue as? String, let id = ControlID(rawValue: idText) else {
+    private static func control(_ members: [(String, ConfigurationJSONValue)])
+        -> Result<DeckControl, ConfigurationError> {
+        guard members.allSatisfy({ controlKeys.contains($0.0) }) else { return .failure(.unknownKey) }
+        guard let idValue = member("id", in: members) else { return .failure(.missingControlID) }
+        guard case .string(let idText) = idValue, let id = ControlID(rawValue: idText) else {
             return .failure(.invalidControlID)
         }
-        guard let actionValue = object["action"] else { return .failure(.missingAction) }
+        guard let actionValue = member("action", in: members) else { return .failure(.missingAction) }
         // `ActionID` owns identifier syntax and is reused rather than restated, so the document
         // format and the action boundary cannot drift apart about what an identifier looks like.
-        guard let actionText = actionValue as? String, let action = ActionID(rawValue: actionText) else {
+        guard case .string(let actionText) = actionValue, let action = ActionID(rawValue: actionText) else {
             return .failure(.invalidActionID)
         }
-        switch parameters(object["parameters"], action: action) {
+        switch parameters(member("parameters", in: members), action: action) {
         case .failure(let error): return .failure(error)
         case .success(let parameters):
-            switch presentation(object["presentation"]) {
+            switch presentation(member("presentation", in: members)) {
             case .failure(let error): return .failure(error)
             case .success(let presentation):
                 return .success(DeckControl(id: id, action: action, parameters: parameters,
@@ -295,23 +720,30 @@ enum ConfigurationDecoder {
         }
     }
 
-    private static func parameters(_ value: Any?, action: ActionID) -> Result<ControlParameters, ConfigurationError> {
+    private static func member(_ name: String, in members: [(String, ConfigurationJSONValue)])
+        -> ConfigurationJSONValue? {
+        members.first { $0.0 == name }?.1
+    }
+
+    private static func parameters(_ value: ConfigurationJSONValue?, action: ActionID)
+        -> Result<ControlParameters, ConfigurationError> {
         if action == .appLaunch {
-            // Exactly one key, and the same name the `/launch` wire parameter already uses.
-            guard let object = value as? [String: Any], object.count == 1,
-                  let path = object["path"] as? String else { return .failure(.invalidParameters) }
+            // Exactly one member, named the same as the `/launch` wire parameter already uses.
+            guard let members = value?.objectMembers, members.count == 1,
+                  let (key, pathValue) = members.first, key == "path",
+                  case .string(let path) = pathValue else { return .failure(.invalidParameters) }
             guard path.utf8.count <= ControlParameters.maximumPathBytes else { return .failure(.invalidParameters) }
             return .success(.appPath(path))
         }
         // Any other syntactically valid identifier: parameters are optional and preserved as flat
         // string data. Being preserved is not being executable — see `actionParameters`.
         guard let value else { return .success(.unmodeled([:])) }
-        guard let object = value as? [String: Any] else { return .failure(.invalidParameters) }
-        guard object.count <= ControlParameters.maximumUnmodeledEntries else { return .failure(.invalidParameters) }
+        guard let members = value.objectMembers else { return .failure(.invalidParameters) }
+        guard members.count <= ControlParameters.maximumUnmodeledEntries else { return .failure(.invalidParameters) }
         var flat: [String: String] = [:]
-        for (key, element) in object {
+        for (key, element) in members {
             guard key.utf8.count <= ControlParameters.maximumUnmodeledKeyBytes,
-                  let text = element as? String,
+                  case .string(let text) = element,
                   text.utf8.count <= ControlParameters.maximumUnmodeledValueBytes else {
                 return .failure(.invalidParameters)
             }
@@ -320,29 +752,16 @@ enum ConfigurationDecoder {
         return .success(.unmodeled(flat))
     }
 
-    private static func presentation(_ value: Any?) -> Result<ControlPresentation, ConfigurationError> {
+    private static func presentation(_ value: ConfigurationJSONValue?)
+        -> Result<ControlPresentation, ConfigurationError> {
         guard let value else { return .success(ControlPresentation(title: nil)) }
-        guard let object = value as? [String: Any] else { return .failure(.invalidPresentation) }
-        guard object.keys.allSatisfy({ $0 == "title" }) else { return .failure(.unknownKey) }
-        guard let titleValue = object["title"] else { return .success(ControlPresentation(title: nil)) }
-        guard let title = titleValue as? String, ControlPresentation.isValidTitle(title) else {
+        guard let members = value.objectMembers else { return .failure(.invalidPresentation) }
+        guard members.allSatisfy({ $0.0 == "title" }) else { return .failure(.unknownKey) }
+        guard let titleValue = members.first?.1 else { return .success(ControlPresentation(title: nil)) }
+        guard case .string(let title) = titleValue, ControlPresentation.isValidTitle(title) else {
             return .failure(.invalidPresentation)
         }
         return .success(ControlPresentation(title: title))
-    }
-
-    /// A JSON number that is exactly an integer, and is not a JSON boolean.
-    ///
-    /// `JSONSerialization` bridges both to `NSNumber` — `__NSCFBoolean` is a subclass — so `as? Int`
-    /// accepts `true` and `1.0` alike and `is Bool` is ambiguous for `1`. The CF type identifies the
-    /// boolean; exactness against the widened `Double` rejects `1.5` and anything outside `Int`.
-    /// `1.0` is accepted as `1`, because JSON has one number type and refusing an exactly integral
-    /// value would be surprising.
-    private static func integerValue(_ value: Any) -> Int? {
-        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
-        let widened = number.doubleValue
-        guard let exact = Int(exactly: widened), Double(exact) == widened else { return nil }
-        return exact
     }
 }
 
@@ -363,40 +782,11 @@ enum ConfigurationEncoder {
     /// Non-throwing form, so migration can hold its result to the same bounds without producing a
     /// document that a later read would reject.
     static func verifiedData(_ configuration: DeckConfigurationV1) -> Result<Data, ConfigurationError> {
-        // `.sortedKeys` makes the bytes deterministic, so idempotence is observable; `.prettyPrinted`
-        // matches the house style `Launcher.save` already writes.
-        guard let data = try? JSONSerialization.data(withJSONObject: documentObject(configuration),
-                                                     options: [.prettyPrinted, .sortedKeys]) else {
-            return .failure(.notSerializable)
-        }
+        guard let data = ConfigurationCanonicalForm.data(configuration) else { return .failure(.notSerializable) }
         switch ConfigurationDecoder.decode(.data(data)) {
         case .v1(let decoded) where decoded == configuration: return .success(data)
         case .malformed(let error): return .failure(error)
         default: return .failure(.encoderRoundTripMismatch)
-        }
-    }
-
-    private static func documentObject(_ configuration: DeckConfigurationV1) -> [String: Any] {
-        ["version": DeckConfigurationV1.version,
-         "controls": configuration.controls.map { controlObject($0) }]
-    }
-
-    private static func controlObject(_ control: DeckControl) -> [String: Any] {
-        var object: [String: Any] = [
-            "id": control.id.rawValue,
-            "action": control.action.rawValue,
-            "parameters": parametersObject(control.parameters),
-        ]
-        // Omitted rather than written as null, so a control with no label round-trips as a control
-        // with no `presentation` key.
-        if let title = control.presentation.title { object["presentation"] = ["title": title] }
-        return object
-    }
-
-    private static func parametersObject(_ parameters: ControlParameters) -> [String: String] {
-        switch parameters {
-        case .appPath(let path): return ["path": path]
-        case .unmodeled(let values): return values
         }
     }
 }
