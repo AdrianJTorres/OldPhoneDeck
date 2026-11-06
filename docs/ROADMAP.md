@@ -132,8 +132,10 @@ requires its own output to decode back to the value it was given.
 sorting, no deduplication, no truncation — and preserves order, duplicates, empty strings and
 an intentionally empty array; an entry that cannot be represented fails the whole migration
 loudly instead of vanishing from it. Ids are positional (`app-1`, `app-2`, …) because a legacy
-array may hold the same path twice. `legacySelection` is the exact inverse and returns `nil`
-rather than a lossy subset. An action that is syntactically valid but unregistered decodes with
+array may hold the same path twice. `legacySelection` is the **lossless** inverse rather than a
+projection: it returns a selection only when migrating that selection back reproduces the
+document exactly, so it also rejects any presentation title and any control id migration would
+not have synthesized. An action that is syntactically valid but unregistered decodes with
 inert `.unmodeled` parameters, which have no conversion to `ActionParameters`, so a document can
 never make an action executable and authorization stays in `ActionRegistry.dispatch`.
 `ConfigurationError` cases carry no payload from the document. Caps are 1 MiB and 4096 controls.
@@ -146,20 +148,29 @@ remains **open** and closes only when M2.5 wires the codec into the read path. M
 IN PROGRESS until independent Codex review and Steering acceptance; M2.5 (storage integration,
 read-path migration and any cutover) has not been briefed.
 
-Validation so far: all **202 Swift Testing tests** pass (the 90 retained M2.1–M2.3 tests plus
-112 new ones across 14 new suites, many parameterized), covering input states, legacy decode,
+Validation so far: all **208 Swift Testing tests** pass (the 90 retained M2.1–M2.3 tests plus
+118 new ones across 14 new suites, many parameterized), covering input states, legacy decode,
 V1 decode, version precedence, document strictness and both caps, control identity, configured
 actions, parameters, presentation, encoder strictness, round trips, migration, reverse
 conversion and security invariants. Codec tests open no file and need no home-directory
 isolation; the action-boundary checks reuse the injecting `testRegistry` helper, so no test
 constructs the production `ActionRegistry()`. `swift build -c release` passes with no warnings.
-Seven mutations — hoisting the unknown-key check above the version check, dropping empty legacy
+Eight mutations — hoisting the unknown-key check above the version check, dropping empty legacy
 entries during migration, making `legacySelection` skip unrepresentable controls, collapsing
 `.unreadable` into `.absent`, removing the encoder's round-trip verification, making `.unmodeled`
-convertible to `ActionParameters`, and removing the control-count cap — were each observed to
-fail the relevant tests and were reverted, leaving a clean working tree. No physical iPhone 11
-acceptance is claimed or possible for this slice, because no endpoint or client behaviour
-changed.
+convertible to `ActionParameters`, removing the control-count cap, and removing the
+losslessness guard from `legacySelection` — were each observed to fail the relevant tests and
+were reverted, leaving a clean working tree. No physical iPhone 11 acceptance is claimed or
+possible for this slice, because no endpoint or client behaviour changed.
+
+Steering inspected the pushed implementation directly and found one deviation from the approved
+brief: `legacySelection` was a partial projection, returning paths for controls whose title or
+custom id it could not reproduce, and the test `aTitleDoesNotMakeAConversionLossy` approved that
+loss. It has been corrected to the invariant
+`migrateToV1(legacySelection(v1)!) == .success(v1)` for every non-nil result, that test was
+replaced, and rejection of lossy titles, custom ids, reordered ids and gapped ids is now covered
+alongside a round-trip invariant test that fails if every fixture is rejected. The V1 JSON
+schema, and the encoder and decoder validation, are unchanged.
 
 M2 is **not complete**. M2.1, M2.2 and M2.3 are accepted; the Action Registry currently
 supports only app launch, and versioned configuration exists only as an unwired codec pending

@@ -465,8 +465,13 @@ Five rules carry the weight:
    preserved. An entry that cannot be represented fails the whole migration loudly instead of
    vanishing from it. Ids are positional (`app-1`, `app-2`, …) because a legacy array may
    legitimately hold the same path twice and a path-derived id would collide, turning a valid
-   legacy document into an invalid V1 one. `legacySelection` is the exact inverse and returns
-   `nil` rather than a subset when a document is not legacy-representable.
+   legacy document into an invalid V1 one. `legacySelection` is the **lossless** inverse, not a
+   projection: it returns a selection only when migrating that selection back reproduces the
+   document exactly, so it rejects unregistered actions, `.unmodeled` parameters, any
+   presentation title, and any control id migration would not have synthesized — custom,
+   reordered or gapped. It verifies this by re-running the migration and comparing, rather than
+   by restating migration's rules, so the two directions cannot drift apart; the cost is one
+   extra pass over the document per call, acceptable on a configuration read path.
 5. **The encoder is as strict as the decoder because it does not restate the decoder's rules.**
    It serializes, then requires its own output to decode back to the value it was given, so the
    two directions cannot drift apart and an in-memory configuration that could not be read back

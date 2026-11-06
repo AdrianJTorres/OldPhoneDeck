@@ -765,35 +765,116 @@ struct MigrationTests {
     }
 }
 
-// MARK: L. Reverse conversion rejects lossy representations
+// MARK: L. Reverse conversion is lossless, not a projection
 
 struct LegacySelectionTests {
+    /// A configuration produced by migration. A broken fixture should stop the run rather than
+    /// quietly weaken a test, so this traps instead of returning a stand-in.
+    private func migrated(_ legacy: [String]) -> DeckConfigurationV1 {
+        guard case .success(let configuration) = ConfigurationMigrator.migrateToV1(legacy) else {
+            preconditionFailure("fixture did not migrate: \(legacy)")
+        }
+        return configuration
+    }
+
     @Test func anEmptyDocumentYieldsAnEmptySelectionNotNil() {
-        // A deliberately empty deck is representable, and is not the same as an unrepresentable one.
+        // A deliberately empty deck round-trips, and is not the same as an unrepresentable one.
         #expect(ConfigurationMigrator.legacySelection(DeckConfigurationV1(controls: [])) == [])
     }
 
     @Test func anUnmodeledControlMakesTheWholeConversionFail() {
         // Serving a subset would silently drop a key the user configured, which is the same class of
         // loss ADR-007 was written to prevent.
-        let mixed = DeckConfigurationV1(controls: [appControl(id: "a"), unmodeledControl(id: "b")])
+        let mixed = DeckConfigurationV1(controls: [appControl(id: "app-1"), unmodeledControl(id: "app-2")])
         #expect(ConfigurationMigrator.legacySelection(mixed) == nil)
     }
 
     @Test func anAppPathUnderAnUnregisteredActionIsStillLossy() {
         // `.appPath` parameters alone do not make a control legacy-representable: the legacy format
         // is a list of paths for one implicit action and carries no action identifier at all.
-        let lossy = DeckControl(id: ControlID(rawValue: "a")!, action: ActionID(rawValue: "app.quit")!,
+        let lossy = DeckControl(id: ControlID(rawValue: "app-1")!, action: ActionID(rawValue: "app.quit")!,
                                 parameters: .appPath("/Applications/Safari.app"),
                                 presentation: ControlPresentation(title: nil))
         #expect(ConfigurationMigrator.legacySelection(DeckConfigurationV1(controls: [lossy])) == nil)
     }
 
-    @Test func aTitleDoesNotMakeAConversionLossy() {
-        // Presentation metadata has no legacy representation and needs none: the legacy format never
-        // carried a label, and `GET /launcher` still serves names from the application catalog.
-        let titled = DeckConfigurationV1(controls: [appControl(id: "a", title: "Build")])
-        #expect(ConfigurationMigrator.legacySelection(titled) == ["/Applications/Safari.app"])
+    @Test func aTitleMakesTheConversionLossy() {
+        // Migration synthesizes no title, so a label cannot be reproduced from a bare path list.
+        // Returning the path anyway would discard the user's label while reporting a complete deck.
+        // The id is positional here, which isolates the title as the only lossy element.
+        let titled = DeckConfigurationV1(controls: [appControl(id: "app-1", title: "Build")])
+        #expect(ConfigurationMigrator.legacySelection(titled) == nil)
+    }
+
+    @Test func aCustomIDMakesTheConversionLossy() {
+        // Migration synthesizes `app-1`, `app-2`, … positionally. A meaningful id is information the
+        // legacy format cannot carry, so this is not the document migration would reproduce.
+        let custom = DeckConfigurationV1(controls: [appControl(id: "build-terminal")])
+        #expect(ConfigurationMigrator.legacySelection(custom) == nil)
+    }
+
+    @Test func reorderedControlsAreNotReconstructible() {
+        // The paths are still in document order, but the ids no longer match the positions
+        // migration would assign, so this reordering is not something a path list can express.
+        let reordered = DeckConfigurationV1(controls: [appControl(id: "app-2", path: "/a.app"),
+                                                      appControl(id: "app-1", path: "/b.app")])
+        #expect(ConfigurationMigrator.legacySelection(reordered) == nil)
+    }
+
+    @Test func aGapInTheIDSequenceIsNotReconstructible() {
+        let gapped = DeckConfigurationV1(controls: [appControl(id: "app-1"), appControl(id: "app-3")])
+        #expect(ConfigurationMigrator.legacySelection(gapped) == nil)
+    }
+
+    @Test func anIDThatIsNotPositionalIsNotReconstructible() {
+        #expect(ConfigurationMigrator.legacySelection(DeckConfigurationV1(controls: [appControl(id: "app-0")])) == nil)
+        #expect(ConfigurationMigrator.legacySelection(DeckConfigurationV1(controls: [appControl(id: "key-1")])) == nil)
+        #expect(ConfigurationMigrator.legacySelection(DeckConfigurationV1(controls: [appControl(id: "app-2")])) == nil)
+    }
+
+    @Test func aMigratedSelectionIsPreservedWithOrderDuplicatesAndEmptyPaths() {
+        // The positive half of the correction: the new rejection rules must not swallow anything
+        // migration actually produced, including the awkward legacy cases.
+        for legacy in [[], ["/a.app"], ["/a.app", "/a.app"], ["", "/a.app", ""],
+                       ["/z.app", "/m.app", "/a.app"], ["/nonexistent/Impossible.app"]] {
+            #expect(ConfigurationMigrator.legacySelection(migrated(legacy)) == legacy)
+        }
+    }
+
+    @Test func everyAcceptedReverseConversionMigratesBackIdentically() {
+        // The approved invariant, stated as a test rather than as a comment: whenever
+        // `legacySelection` returns a selection, migrating that selection reproduces the document
+        // exactly — ids, order, duplicates, empty paths and metadata included.
+        let documents = [
+            // Accepted: everything here is what migration produces.
+            DeckConfigurationV1(controls: []),
+            DeckConfigurationV1(controls: [appControl(id: "app-1")]),
+            DeckConfigurationV1(controls: [appControl(id: "app-1", path: "")]),
+            DeckConfigurationV1(controls: [appControl(id: "app-1", path: "/a.app"),
+                                           appControl(id: "app-2", path: "/a.app")]),
+            migrated(["/z.app", "", "/z.app", "/a.app"]),
+            migrated((1...9).map { "/Applications/A\($0).app" }),
+            // Rejected: each one carries something a bare path list cannot hold.
+            DeckConfigurationV1(controls: [appControl(id: "app-1", title: "Build")]),
+            DeckConfigurationV1(controls: [appControl(id: "build-terminal")]),
+            DeckConfigurationV1(controls: [appControl(id: "app-2", path: "/a.app"),
+                                           appControl(id: "app-1", path: "/b.app")]),
+            DeckConfigurationV1(controls: [appControl(id: "app-1"), appControl(id: "app-3")]),
+            DeckConfigurationV1(controls: [appControl(id: "app-1"), unmodeledControl(id: "app-2")]),
+            DeckConfigurationV1(controls: [unmodeledControl(id: "app-1", action: "media.next")]),
+        ]
+        var accepted = 0
+        for document in documents {
+            guard let selection = ConfigurationMigrator.legacySelection(document) else { continue }
+            accepted += 1
+            guard case .success(let reconstructed) = ConfigurationMigrator.migrateToV1(selection) else {
+                Issue.record("A returned selection did not migrate back")
+                continue
+            }
+            #expect(reconstructed == document)
+        }
+        // Without this the invariant above would pass vacuously if every document were rejected.
+        #expect(accepted == 6)
     }
 }
 

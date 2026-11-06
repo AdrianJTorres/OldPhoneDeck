@@ -438,18 +438,32 @@ enum ConfigurationMigrator {
         }
     }
 
-    /// The exact inverse of `migrateToV1`, and the shape `GET /launcher` has always served.
+    /// The lossless inverse of `migrateToV1`, and the shape `GET /launcher` has always served.
     ///
-    /// `nil` when the document holds anything the legacy format cannot express. A lossy conversion
-    /// is rejected rather than performed, so no caller can silently serve a subset of the user's
-    /// deck and report it as the whole thing. An empty document yields `[]`, not `nil`: a
-    /// deliberately empty deck is representable, and is not the same as an unrepresentable one.
+    /// This is a reverse conversion, not a projection: it returns a selection **only** when
+    /// migrating that selection back reproduces `configuration` exactly. So it rejects an unknown
+    /// or unregistered action, `.unmodeled` parameters, any presentation title, and any control id
+    /// migration would not have synthesized — a custom id, a reordered id, or a gap in the
+    /// sequence. All of those carry information a bare path list cannot hold, and returning the
+    /// paths anyway would silently discard it while reporting a subset of the user's deck as
+    /// though it were the whole thing.
+    ///
+    /// The invariant holds by construction rather than by restating migration's rules: the
+    /// candidate selection is migrated back and compared, exactly as the encoder validates by
+    /// decoding its own output. The two directions therefore cannot drift apart. The cost is one
+    /// extra pass over the document per call, which is acceptable on a configuration read path.
+    ///
+    /// An empty document yields `[]`, not `nil`: a deliberately empty deck round-trips, and is not
+    /// the same as an unrepresentable one.
     static func legacySelection(_ configuration: DeckConfigurationV1) -> [String]? {
         var paths: [String] = []
         paths.reserveCapacity(configuration.controls.count)
         for control in configuration.controls {
             guard control.action == .appLaunch, case .appPath(let path) = control.parameters else { return nil }
             paths.append(path)
+        }
+        guard case .success(let reconstructed) = migrateToV1(paths), reconstructed == configuration else {
+            return nil
         }
         return paths
     }
