@@ -499,6 +499,9 @@ enum ExactJSONNumber {
             guard fractionCount > 0 else { return nil }
         }
         var exponent = 0
+        // Set once the exponent's digits pass `exponentLimit`, after which `exponent` no longer
+        // holds the true value and must not be used in arithmetic.
+        var exponentBeyondLimit = false
         if cursor < bytes.count, bytes[cursor] == 0x65 || bytes[cursor] == 0x45 {
             cursor += 1
             var exponentNegative = false
@@ -507,18 +510,43 @@ enum ExactJSONNumber {
                 cursor += 1
             }
             var digits = 0
+            // The largest exponent that could still produce a representable result, **derived**
+            // rather than chosen. With `m` mantissa digits of which `f` follow the point, the exact
+            // value is N × 10^(E−f) for an integer N with 0 ≤ N < 10^m.
+            //
+            //   N = 0 — the value is 0 for every E, decided below without consulting E at all.
+            //   N ≠ 0 — let d ≥ 1 be N's count of significant digits.
+            //     E−f ≥ 0: |value| ≥ 10^(d−1) × 10^(E−f) ≥ 10^(E−f), so fitting Int.max < 10^19
+            //              requires E−f ≤ 18, hence E ≤ f + 18 ≤ m + 18.
+            //     E−f < 0: the value is an integer only if 10^(f−E) divides N. For g = f−E ≥ m,
+            //              10^g ≥ 10^m > N ≥ 1 cannot divide N, so E > f − m ≥ −m is required.
+            //
+            // Every exponent outside ±(m + 19) is therefore provably out of range for a nonzero N,
+            // and every exponent inside it is accumulated exactly — so `m + 19` bounds what can
+            // matter instead of truncating what does. That distinction is the whole fix: past the
+            // limit the accumulator stops and the value is *discarded*, never carried into
+            // `exponent − fractionCount` as though it were the real exponent. Stopping there also
+            // keeps the stored magnitude under 10·(m + 19) + 9, so neither it nor the subtraction
+            // below can overflow, `m` itself being bounded by the document cap.
+            let exponentLimit = mantissa.count + 19
             while cursor < bytes.count, isDigit(bytes[cursor]) {
-                // Saturate rather than overflow: an exponent this large cannot produce a value
-                // inside `Int`, and saturating still yields the right answer without trapping.
-                if exponent < 1_000_000 { exponent = exponent * 10 + Int(bytes[cursor] - 0x30) }
+                if exponent <= exponentLimit {
+                    exponent = exponent * 10 + Int(bytes[cursor] - 0x30)
+                } else {
+                    exponentBeyondLimit = true
+                }
                 digits += 1
                 cursor += 1
             }
             guard digits > 0 else { return nil }
-            if exponentNegative { exponent = -exponent }
+            if exponentNegative, !exponentBeyondLimit { exponent = -exponent }
         }
         // The scanner already guaranteed the grammar; this keeps the function total on its own.
         guard cursor == bytes.count else { return nil }
+
+        // An exponent beyond the derived limit cannot produce a representable nonzero value, and
+        // zero times any power of ten is zero, so here only the mantissa decides the answer.
+        if exponentBeyondLimit { return mantissa.contains(where: { $0 != 0x30 }) ? nil : 0 }
 
         // Exact value = mantissa × 10^(exponent − fractionCount). Move the point inside the digit
         // string; the value is an integer only when nothing significant lands after it.

@@ -159,8 +159,8 @@ remains **open** and closes only when M2.5 wires the codec into the read path. M
 IN PROGRESS until the corrected codec passes independent re-review and Steering acceptance;
 M2.5 (storage integration, read-path migration and any cutover) has not been briefed.
 
-Validation so far: all **241 Swift Testing tests** pass (the 90 retained M2.1–M2.3 tests plus
-151 new ones across 17 new suites, many parameterized), covering input states, legacy decode,
+Validation so far: all **248 Swift Testing tests** pass (the 90 retained M2.1–M2.3 tests plus
+158 new ones across 17 new suites, many parameterized), covering input states, legacy decode,
 V1 decode, version precedence, document strictness and both caps, control identity, configured
 actions, parameters, presentation, encoder strictness, round trips, migration, reverse
 conversion, security invariants, strict JSON syntax, exact version parsing and the canonical
@@ -211,6 +211,24 @@ were never RFC 8259 documents are now malformed rather than silently read, and a
 canonical form exceeds the cap is now rejected rather than accepted as unsaveable. M2.4 remains
 **IN PROGRESS** and ADR-015 remains **Proposed**: these corrections have not been re-reviewed or
 accepted, and nothing is wired.
+
+Re-review returned **FAIL** on one remaining major defect, in `ExactJSONNumber.exactInteger`. The
+exponent accumulator stopped updating past a fixed magnitude of 1 000 000 and then carried the
+frozen value into `exponent − fractionCount` as though it were exact. Because the freeze point was
+a constant while the fraction length is bounded only by the document, a huge exponent could cancel
+a huge fraction: `0.` + 999 999 zeros + `1e10000000`, which is exactly 10^9000000, decoded as
+**version 1**, and `1` + 1 000 000 zeros + `e-10000000`, which is exactly 10^-9000000 and not an
+integer at all, also decoded as version 1. Both documents fit inside the 1 MiB cap, so nothing
+else rejected them. Corrected by deriving the bound instead of choosing one: with `m` mantissa
+digits and `f` after the point, a nonzero value needs `E − f ≤ 18` to fit `Int.max < 10^19` and
+needs `f − E < m` to be an integer, so every exponent outside `±(m + 19)` is provably out of range.
+Past that bound the value is discarded rather than truncated, and the token is decided by its
+mantissa alone — nil if nonzero, `0` if zero. Seven tests cover the two reproductions, the derived
+bound, exponents a million digits long, long runs of leading zeros, and zero under an absurd
+exponent; two of them assert that a large mantissa and a large exponent which genuinely cancel
+still read as exactly 1, so rejecting every large exponent cannot pass. The scanner, the schema,
+the decoder states and the canonical size contract are unchanged. M2.4 remains **IN PROGRESS**
+and ADR-015 remains **Proposed** pending re-review; M2.5 has not been started.
 
 M2 is **not complete**. M2.1, M2.2 and M2.3 are accepted; the Action Registry currently
 supports only app launch, and versioned configuration exists only as an unwired codec pending

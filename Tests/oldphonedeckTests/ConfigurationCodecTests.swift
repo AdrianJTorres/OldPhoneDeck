@@ -1259,6 +1259,105 @@ struct ExactVersionParsingTests {
                     "\(literal) cannot be an Int")
         }
     }
+
+    /// A minimal V1 document carrying `literal` as its version. The byte count is asserted so a
+    /// rejection below can only be about the number and never about the document's size.
+    private func versionDocument(_ literal: String,
+                                 sourceLocation: SourceLocation = #_sourceLocation) -> String {
+        let json = "{\"version\":\(literal),\"controls\":[]}"
+        #expect(Data(json.utf8).count <= ConfigurationDecoder.maximumDocumentBytes,
+                sourceLocation: sourceLocation)
+        return json
+    }
+
+    /// The exponent accumulator used to stop updating past a fixed magnitude and then carry on
+    /// using the truncated value as though it were exact. A huge exponent could therefore be
+    /// cancelled by a huge fraction count, and a version of 10^9000000 read as version 1.
+    @Test func aHugeExponentIsNotCancelledByAHugeFraction() {
+        // 0.<999999 zeros>1e10000000 is exactly 10^9000000: a real integer, absurdly out of range,
+        // and nothing whatsoever to do with 1.
+        let literal = "0." + String(repeating: "0", count: 999_999) + "1e10000000"
+        let json = versionDocument(literal)
+        #expect(decode(json) == .malformed(.invalidVersion))
+        #expect(decode(json) != .v1(DeckConfigurationV1(controls: [])),
+                "a truncated exponent must not cancel the fraction into version 1")
+    }
+
+    @Test func aHugeNegativeExponentIsNotCancelledByAHugeMantissa() {
+        // 1<1000000 zeros>e-10000000 is exactly 10^-9000000: nonzero, and not an integer at all.
+        let literal = "1" + String(repeating: "0", count: 1_000_000) + "e-10000000"
+        let json = versionDocument(literal)
+        #expect(decode(json) == .malformed(.invalidVersion))
+        #expect(decode(json) != .v1(DeckConfigurationV1(controls: [])),
+                "a truncated negative exponent must not cancel the mantissa into version 1")
+    }
+
+    /// Rejecting every large exponent would hide the defect rather than fix it. A large mantissa
+    /// and a large exponent can cancel *exactly*, and those documents really are version 1.
+    @Test func aLargeMantissaAndALargeExponentCanStillCancelExactly() {
+        let cases = [
+            "1" + String(repeating: "0", count: 1_000_000) + "e-1000000",   // 10^1000000 / 10^1000000
+            "0." + String(repeating: "0", count: 999_999) + "1e1000000",    // 10^-1000000 * 10^1000000
+        ]
+        for literal in cases {
+            #expect(decode(versionDocument(literal)) == .v1(DeckConfigurationV1(controls: [])),
+                    "a million digits that cancel exactly still mean 1")
+        }
+    }
+
+    @Test func aLongRunOfLeadingZerosInAFractionIsHandledExactly() {
+        let zeros = String(repeating: "0", count: 500_000)
+        // The fraction is 500 001 digits, so an exponent of 500 001 cancels it to exactly 1.
+        #expect(decode(versionDocument("0." + zeros + "1e500001")) == .v1(DeckConfigurationV1(controls: [])))
+        // One more power of ten and the value is exactly 10, which is a version but not this one.
+        #expect(decode(versionDocument("0." + zeros + "1e500002")) == .unsupportedVersion(found: 10))
+        // One fewer and the value is 1/10, which is not an integer.
+        #expect(decode(versionDocument("0." + zeros + "1e500000")) == .malformed(.invalidVersion))
+    }
+
+    @Test func zeroWithAnAbsurdExponentIsStillZero() {
+        // Zero times any power of ten is zero, so the exponent's magnitude cannot matter here. A
+        // version of 0 is malformed because no version below 1 ever existed — not because the
+        // exponent was unreadable.
+        for literal in ["0e999999999999999999999", "-0e999999999999999999999",
+                        "0.000e999999999999", "0e-999999999999999999999",
+                        "0." + String(repeating: "0", count: 100_000) + "e999999999999"] {
+            #expect(decode(versionDocument(literal)) == .malformed(.invalidVersion),
+                    "\(literal) is exactly zero")
+        }
+        // Zero stays distinguishable from one, so this is not a blanket rejection of big exponents.
+        #expect(decode(#"{"version":0e0,"controls":[]}"#) == .malformed(.invalidVersion))
+        #expect(decode(#"{"version":1e0,"controls":[]}"#) == .v1(DeckConfigurationV1(controls: [])))
+    }
+
+    @Test func anExponentTooLongToRepresentIsRejectedWithoutOverflow() {
+        // A million exponent digits is legal grammar and fits the document cap. Neither the
+        // accumulator nor `exponent - fractionCount` may overflow, and no digit string may be
+        // materialized. The exponent's sign decides nothing here: both directions are out of range.
+        let digits = String(repeating: "9", count: 1_000_000)
+        for literal in ["1e" + digits, "1e-" + digits, "1.5e" + digits] {
+            #expect(decode(versionDocument(literal)) == .malformed(.invalidVersion))
+        }
+    }
+
+    /// The literals every earlier correction pinned, restated in one place so the exponent work
+    /// cannot quietly undo them.
+    @Test(arguments: [
+        ("1", .v1(DeckConfigurationV1(controls: []))),
+        ("1.0", .v1(DeckConfigurationV1(controls: []))),
+        ("1e0", .v1(DeckConfigurationV1(controls: []))),
+        ("1e+0", .v1(DeckConfigurationV1(controls: []))),
+        ("1.5e1", .unsupportedVersion(found: 15)),
+        ("9007199254740993", .unsupportedVersion(found: 9_007_199_254_740_993)),
+        ("9223372036854775807", .unsupportedVersion(found: 9_223_372_036_854_775_807)),
+        ("9223372036854775808", .malformed(.invalidVersion)),
+        ("true", .malformed(.invalidVersion)),
+        ("1.0000000000000001", .malformed(.invalidVersion)),
+        ("0.99999999999999999", .malformed(.invalidVersion)),
+    ] as [(String, ConfigurationState)])
+    func thePreviouslyCorrectedVersionLiteralsAreUnchanged(_ literal: String, _ expected: ConfigurationState) {
+        #expect(decode("{\"version\":\(literal),\"controls\":[]}") == expected)
+    }
 }
 
 // MARK: P. Canonical size invariant

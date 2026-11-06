@@ -496,8 +496,18 @@ Seven rules carry the weight:
    version 1, `9007199254740993` is reported as itself rather than as `9007199254740992`, and
    `9223372036854775807` is an honest "your PhoneDeck is older than this file" instead of a
    claim that the file is corrupt. Exactly-integral spellings stay accepted — `1.0`, `1e0`,
-   `0.1e1` and `1.5e1` (which is 15) — because JSON has one number type, and an absurd exponent
-   is rejected on its digit count before any zeros are materialized.
+   `0.1e1` and `1.5e1` (which is 15) — because JSON has one number type. An exponent too large to
+   matter is **discarded, never truncated**: with `m` mantissa digits and `f` of them after the
+   point, a nonzero value needs `E − f ≤ 18` to fit `Int.max < 10^19`, and needs `f − E < m` to be
+   an integer at all, so every exponent outside `±(m + 19)` is provably out of range. The
+   accumulator stops at that derived bound and the token is then decided by its mantissa alone —
+   nil if nonzero, `0` if zero, since zero times any power of ten is zero. The bound is derived
+   from the mantissa length rather than chosen, which is what makes it safe: freezing at a fixed
+   magnitude and then carrying the frozen value into `E − f` let a huge exponent cancel a huge
+   fraction, and `0.` followed by 999 999 zeros followed by `1e10000000` — exactly 10^9000000 —
+   read as version 1. Large exponents that genuinely cancel stay accepted, so
+   `1` followed by 1 000 000 zeros followed by `e-1000000` is still exactly 1; rejecting every
+   large exponent would have hidden that defect rather than fixed it.
 7. **The byte cap is one claim measured in both directions.** The decoder accepts a document
    only if the *canonical* form — pretty-printed with sorted keys, the one form the encoder
    writes — also fits the cap. Pretty-printing expands a compact document, so measuring the cap
