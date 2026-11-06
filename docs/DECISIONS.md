@@ -413,3 +413,149 @@ letting unknown identifiers fall back to the registered action — each turned t
 tests red and were reverted; with the catalog gate **and** parameter validation removed
 simultaneously, the suite still fails closed with no test able to reach NSWorkspace, because
 no test constructs the production `ActionRegistry()`.
+
+---
+
+## ADR-015 — Configuration V1 document shape
+
+**Status:** Accepted by Steering · 2026-11-06 · Target: M2.4. The final independent Codex
+review returned **PASS** on 2026-11-06 with no unresolved major or minor findings. Two earlier
+review rounds found four defects — a `Double`-widened version, a size cap measured only on the
+bytes as read, a lenient `JSONSerialization` reader, and a truncated exponent accumulator that
+let `10^9000000` read as version 1. All four are closed; they are kept as historical evidence in
+the ROADMAP M2.4 entry and in rules 6 and 7 below, not as open findings. This **elaborates**
+ADR-007, which stays accepted and unedited; it does not supersede it. ADR-007 decided that
+configuration becomes a versioned document with explicit migration. This record decides what that
+document looks like.
+
+**Context.** `launcher.json` is a bare JSON array of application paths, and
+`Launcher.selected()` returns `nil` for an absent file, an unreadable file and an
+unparseable file alike, so any format change silently resets the user's layout. M3 needs
+controls with identities, action types and metadata (ADR-010), and M2.3 established that an
+action is executable only if `ActionRegistry` resolves and authorizes it. A configuration
+format therefore has to carry action identifiers without being able to grant them authority,
+and it has to fail loudly rather than degrade to "never configured".
+
+**Decision.** Configuration V1 is a JSON **object** — `{"version": 1, "controls": […]}` —
+while the legacy format stays a JSON **array**, so the root type alone discriminates them
+with no sentinel key and no probing. Each control carries a stable opaque `id` (lowercase
+dashed name, ≤64 bytes, unique per document), an `action` identifier validated by the
+existing `ActionID` type, flat `String → String` `parameters`, and optional `presentation`
+metadata holding only a bounded `title`.
+
+Seven rules carry the weight:
+
+1. **Strict unknown keys.** A `version: 1` document with a key this build does not know is
+   malformed. Such a document was not written by this binary, and ADR-007 exists precisely to
+   stop that case from silently resetting the deck. Layout extensibility therefore comes from
+   a future V2 and an in-memory V1→V2 migration, not from a reserved opaque subtree: an
+   uninterpreted `[String: Any]` subtree cannot be `Equatable`, which would give up the exact
+   round trips that make a pure codec worth having.
+2. **The version is identified before any V1 structural or unknown-key check.** A newer
+   document legitimately carries keys V1 has never heard of, and reporting "unknown key" would
+   describe a newer file as a corrupt one. `version > 1` is `.unsupportedVersion`; `version < 1`
+   is malformed, because no version below 1 ever existed and telling a user to upgrade a
+   corrupt file is a misleading diagnosis.
+3. **Configuration validity is not action authorization.** An action identifier that is
+   syntactically valid but not registered decodes successfully, with its parameters preserved
+   as inert `.unmodeled` data. Making it a decode error would mean that adding or removing an
+   action in code could invalidate a user's whole deck. `.unmodeled` has no conversion to
+   `ActionParameters`, so no document can make an unregistered action executable; `.appPath`
+   is the only convertible shape, and what it yields is still only data that
+   `ActionRegistry.dispatch` re-validates and re-authorizes against `Apps.isKnown`.
+4. **Migration is purely syntactic and never drops an entry.** `migrateToV1` performs no
+   `Apps.list()`, no `Apps.isKnown`, no normalization, no sorting, no deduplication and no
+   truncation: dropping one entry would shift every later key and change what the phone
+   renders. Order, duplicates, empty strings and an intentionally empty array are all
+   preserved. An entry that cannot be represented fails the whole migration loudly instead of
+   vanishing from it. Ids are positional (`app-1`, `app-2`, …) because a legacy array may
+   legitimately hold the same path twice and a path-derived id would collide, turning a valid
+   legacy document into an invalid V1 one. `legacySelection` is the **lossless** inverse, not a
+   projection: it returns a selection only when migrating that selection back reproduces the
+   document exactly, so it rejects unregistered actions, `.unmodeled` parameters, any
+   presentation title, and any control id migration would not have synthesized — custom,
+   reordered or gapped. It verifies this by re-running the migration and comparing, rather than
+   by restating migration's rules, so the two directions cannot drift apart; the cost is one
+   extra pass over the document per call, acceptable on a configuration read path.
+5. **The encoder is as strict as the decoder because it does not restate the decoder's rules.**
+   It serializes, then requires its own output to decode back to the value it was given, so the
+   two directions cannot drift apart and an in-memory configuration that could not be read back
+   is rejected before it is written rather than discovered on the next launch.
+6. **Reading is done by the codec's own strict RFC 8259 scanner, not by `JSONSerialization`.**
+   Two properties of configuration cannot be retro-fitted onto a lenient reader. The first is
+   syntax: `JSONSerialization` accepts a trailing comma (`{"version":1,"controls":[],}` and
+   `["/a.app",]` both parse), so a truncated or hand-edited file reads as a complete one, and it
+   collapses duplicate names into a dictionary, which makes `{"version":2,"version":1}` resolve
+   to whichever copy the reader keeps — an ambiguous version is the same nondeterminism rule 2
+   exists to remove. The scanner therefore rejects trailing commas, rejects a repeated name at
+   any level (`.duplicateKey`), requires the whole input to be one complete value, forbids a raw
+   control character inside a string, rejects ill-formed UTF-8 rather than substituting U+FFFD,
+   rejects a lone surrogate, and stops at a nesting bound of 64 (`.tooDeeplyNested`) so a hostile
+   document cannot exhaust the stack. Deciding control characters in the scanner rather than in
+   `isValidTitle` matters: a title rejects them anyway, but a `path` has no character rule at
+   all, so a syntax-level check is the only thing stopping `"a\0b"` from becoming a configured
+   application path that reaches dispatch. The second property is numbers. The scanner keeps a
+   number as its **exact literal text**, and `ExactJSONNumber` decides integrality on those
+   digits with no floating-point step anywhere, because precision lost before the codec sees the
+   token cannot be recovered after. So `1.0000000000000001` and `0.99999999999999999` are not
+   version 1, `9007199254740993` is reported as itself rather than as `9007199254740992`, and
+   `9223372036854775807` is an honest "your PhoneDeck is older than this file" instead of a
+   claim that the file is corrupt. Exactly-integral spellings stay accepted — `1.0`, `1e0`,
+   `0.1e1` and `1.5e1` (which is 15) — because JSON has one number type. An exponent too large to
+   matter is **discarded, never truncated**: with `m` mantissa digits and `f` of them after the
+   point, a nonzero value needs `E − f ≤ 18` to fit `Int.max < 10^19`, and needs `f − E < m` to be
+   an integer at all, so every exponent outside `±(m + 19)` is provably out of range. The
+   accumulator stops at that derived bound and the token is then decided by its mantissa alone —
+   nil if nonzero, `0` if zero, since zero times any power of ten is zero. The bound is derived
+   from the mantissa length rather than chosen, which is what makes it safe: freezing at a fixed
+   magnitude and then carrying the frozen value into `E − f` let a huge exponent cancel a huge
+   fraction, and `0.` followed by 999 999 zeros followed by `1e10000000` — exactly 10^9000000 —
+   read as version 1. Large exponents that genuinely cancel stay accepted, so
+   `1` followed by 1 000 000 zeros followed by `e-1000000` is still exactly 1; rejecting every
+   large exponent would have hidden that defect rather than fixed it.
+7. **The byte cap is one claim measured in both directions.** The decoder accepts a document
+   only if the *canonical* form — pretty-printed with sorted keys, the one form the encoder
+   writes — also fits the cap. Pretty-printing expands a compact document, so measuring the cap
+   on the bytes as read let a configuration be valid on disk and impossible to save unchanged,
+   which is exactly the silent-failure shape ADR-007 exists to remove. Both directions call the
+   same `ConfigurationCanonicalForm` rather than the encoder calling the decoder and the decoder
+   calling the encoder, so the size contract cannot drift and the two directions cannot recurse.
+
+`ConfigurationError` cases carry no payload from the document — not even an offending key name —
+so configuration content cannot reach a log line or an HTTP response by way of an error,
+matching `ActionOutcome`'s rule. The single exception is `.unsupportedVersion(found:)`, where
+the integer *is* the diagnosis. Document caps (1 MiB, 4096 controls) are corruption guards
+rather than product policy: both are far above anything `POST /launcher` can produce under its
+64 KiB body limit, and the 7-slot product limit stays in the client's `APP_SLOTS` until M2.5
+makes it a writer-side rule. The 1 MiB cap is measured on the canonical form in both directions
+(rule 7), so it bounds what can be *stored*, not merely what can be read.
+
+Rejected alternatives: `Codable` (synthesized decoding ignores unknown keys, cannot express
+absent-versus-malformed without re-implementing the state enum, and puts user content into
+`DecodingError`); `JSONSerialization` **for reading configuration** — it remains the house idiom
+for `launcher.json` and every API response, and this codec still uses it to *write* the canonical
+form, but it accepts trailing commas, collapses duplicate names into a dictionary and hands back
+numbers already widened to `Double`, none of which a caller can correct after the fact (rule 6);
+a reserved opaque `layout` subtree (rule 1); path-derived control ids (rule 4); treating every
+non-`1` version as "from the future" (rule 2); and measuring the byte cap on the document as read
+rather than on the form the codec would write (rule 7).
+
+**Consequences.** M2.4 delivers `Sources/oldphonedeck/Configuration.swift` as a pure codec plus
+migration, and nothing else. It takes `ConfigurationInput` (`.absent` / `.unreadable` /
+`.data`) rather than a `URL`, so it opens no file and its tests need no home-directory
+isolation — which matters here, because `NSHomeDirectory()` ignores `$HOME` on this macOS
+build. Absence and unreadability are distinct states that demand opposite responses: an absent
+document may be created, an unreadable one must never be overwritten.
+
+The codec is **not wired**: `Launcher`, `/launcher` and the client are untouched, `launcher.json`
+stays on disk, and the ARCHITECTURE §9 finding that unparseable and absent are
+indistinguishable *at runtime* remains open until M2.5. The module is also dead code in the
+release binary until then, which is the deliberate cost of landing a boundary one milestone
+ahead of the feature that uses it.
+
+M2.5 owns storage integration, the read-path migration, any writer, the product-level control
+cap, and the dual-write-versus-cutover decision — ADR-007 retains `launcher.json` until the new
+format is proven on the physical device, and a binary downgraded after a V1 cutover would
+otherwise read `nil` and show an empty deck. M3 owns `layout`, the V1→V2 migration and
+data-driven rendering. Adding an action stays a deliberate code change, not configuration.
+
