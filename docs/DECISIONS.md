@@ -413,3 +413,95 @@ letting unknown identifiers fall back to the registered action — each turned t
 tests red and were reverted; with the catalog gate **and** parameter validation removed
 simultaneously, the suite still fails closed with no test able to reach NSWorkspace, because
 no test constructs the production `ActionRegistry()`.
+
+---
+
+## ADR-015 — Configuration V1 document shape
+
+**Status:** Proposed · 2026-11-06 · Target: M2.4. Pending independent Codex review and
+Steering ratification. This **elaborates** ADR-007, which stays accepted and unedited; it
+does not supersede it. ADR-007 decided that configuration becomes a versioned document with
+explicit migration. This record decides what that document looks like.
+
+**Context.** `launcher.json` is a bare JSON array of application paths, and
+`Launcher.selected()` returns `nil` for an absent file, an unreadable file and an
+unparseable file alike, so any format change silently resets the user's layout. M3 needs
+controls with identities, action types and metadata (ADR-010), and M2.3 established that an
+action is executable only if `ActionRegistry` resolves and authorizes it. A configuration
+format therefore has to carry action identifiers without being able to grant them authority,
+and it has to fail loudly rather than degrade to "never configured".
+
+**Decision.** Configuration V1 is a JSON **object** — `{"version": 1, "controls": […]}` —
+while the legacy format stays a JSON **array**, so the root type alone discriminates them
+with no sentinel key and no probing. Each control carries a stable opaque `id` (lowercase
+dashed name, ≤64 bytes, unique per document), an `action` identifier validated by the
+existing `ActionID` type, flat `String → String` `parameters`, and optional `presentation`
+metadata holding only a bounded `title`.
+
+Five rules carry the weight:
+
+1. **Strict unknown keys.** A `version: 1` document with a key this build does not know is
+   malformed. Such a document was not written by this binary, and ADR-007 exists precisely to
+   stop that case from silently resetting the deck. Layout extensibility therefore comes from
+   a future V2 and an in-memory V1→V2 migration, not from a reserved opaque subtree: an
+   uninterpreted `[String: Any]` subtree cannot be `Equatable`, which would give up the exact
+   round trips that make a pure codec worth having.
+2. **The version is identified before any V1 structural or unknown-key check.** A newer
+   document legitimately carries keys V1 has never heard of, and reporting "unknown key" would
+   describe a newer file as a corrupt one. `version > 1` is `.unsupportedVersion`; `version < 1`
+   is malformed, because no version below 1 ever existed and telling a user to upgrade a
+   corrupt file is a misleading diagnosis.
+3. **Configuration validity is not action authorization.** An action identifier that is
+   syntactically valid but not registered decodes successfully, with its parameters preserved
+   as inert `.unmodeled` data. Making it a decode error would mean that adding or removing an
+   action in code could invalidate a user's whole deck. `.unmodeled` has no conversion to
+   `ActionParameters`, so no document can make an unregistered action executable; `.appPath`
+   is the only convertible shape, and what it yields is still only data that
+   `ActionRegistry.dispatch` re-validates and re-authorizes against `Apps.isKnown`.
+4. **Migration is purely syntactic and never drops an entry.** `migrateToV1` performs no
+   `Apps.list()`, no `Apps.isKnown`, no normalization, no sorting, no deduplication and no
+   truncation: dropping one entry would shift every later key and change what the phone
+   renders. Order, duplicates, empty strings and an intentionally empty array are all
+   preserved. An entry that cannot be represented fails the whole migration loudly instead of
+   vanishing from it. Ids are positional (`app-1`, `app-2`, …) because a legacy array may
+   legitimately hold the same path twice and a path-derived id would collide, turning a valid
+   legacy document into an invalid V1 one. `legacySelection` is the exact inverse and returns
+   `nil` rather than a subset when a document is not legacy-representable.
+5. **The encoder is as strict as the decoder because it does not restate the decoder's rules.**
+   It serializes, then requires its own output to decode back to the value it was given, so the
+   two directions cannot drift apart and an in-memory configuration that could not be read back
+   is rejected before it is written rather than discovered on the next launch.
+
+`ConfigurationError` cases carry no payload from the document — not even an offending key name —
+so configuration content cannot reach a log line or an HTTP response by way of an error,
+matching `ActionOutcome`'s rule. The single exception is `.unsupportedVersion(found:)`, where
+the integer *is* the diagnosis. Document caps (1 MiB, 4096 controls) are corruption guards
+rather than product policy: both are far above anything `POST /launcher` can produce under its
+64 KiB body limit, and the 7-slot product limit stays in the client's `APP_SLOTS` until M2.5
+makes it a writer-side rule.
+
+Rejected alternatives: `Codable` (synthesized decoding ignores unknown keys, cannot express
+absent-versus-malformed without re-implementing the state enum, and puts user content into
+`DecodingError`; `JSONSerialization` is already the house idiom for both `launcher.json` and
+every API response); a reserved opaque `layout` subtree (rule 1); path-derived control ids
+(rule 4); and treating every non-`1` version as "from the future" (rule 2).
+
+**Consequences.** M2.4 delivers `Sources/oldphonedeck/Configuration.swift` as a pure codec plus
+migration, and nothing else. It takes `ConfigurationInput` (`.absent` / `.unreadable` /
+`.data`) rather than a `URL`, so it opens no file and its tests need no home-directory
+isolation — which matters here, because `NSHomeDirectory()` ignores `$HOME` on this macOS
+build. Absence and unreadability are distinct states that demand opposite responses: an absent
+document may be created, an unreadable one must never be overwritten.
+
+The codec is **not wired**: `Launcher`, `/launcher` and the client are untouched, `launcher.json`
+stays on disk, and the ARCHITECTURE §9 finding that unparseable and absent are
+indistinguishable *at runtime* remains open until M2.5. The module is also dead code in the
+release binary until then, which is the deliberate cost of landing a boundary one milestone
+ahead of the feature that uses it.
+
+M2.5 owns storage integration, the read-path migration, any writer, the product-level control
+cap, and the dual-write-versus-cutover decision — ADR-007 retains `launcher.json` until the new
+format is proven on the physical device, and a binary downgraded after a V1 cutover would
+otherwise read `nil` and show an empty deck. M3 owns `layout`, the V1→V2 migration and
+data-driven rendering. Adding an action stays a deliberate code change, not configuration.
+

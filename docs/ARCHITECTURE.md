@@ -6,7 +6,9 @@ boundary, and explicitly labelled **planned** extension seams. The upstream base
 `e622184`; no slice is completion of M2 or the M5 review. M2.2 passed independent review
 and targeted iPhone 11 camera acceptance and was accepted by Steering; physical audio and
 continuous live MJPEG were not verified. M2.3 passed initial and focused independent review and was **accepted by Steering on
-2026-11-06**. No physical iPhone 11 test was claimed for the M2.3 slice.
+2026-11-06**. No physical iPhone 11 test was claimed for the M2.3 slice. M2.4 (Configuration V1
+codec, ADR-015) is **in progress**: `Configuration.swift` exists as a pure, unwired codec, so
+runtime configuration behaviour is unchanged and still described by §10 and `Launcher`.
 
 - Current behavior: §1–§8, §10–§11
 - Known limitations: §12
@@ -84,7 +86,8 @@ binary, stop it with Ctrl-C.
 | `HTTPParsing.swift` | — | Incremental framing; application route metadata and admission | `HTTPRequestParser`, `HTTPRequestHead`, `HTTPRequest`, `HTTPFailure`, `DeckRoute` |
 | `ResourceLimits.swift` | — | Explicit HTTP/media budgets, message validation, frame handoff, audio accounting | `HTTPConnectionBudget`, `MediaSessionBudget`, `PhoneMediaMessage`, `LatestFrameHandoff`, `AudioQueueBudget` |
 | `ActionRegistry.swift` | — | Approved-action boundary: identifier syntax, server-authored metadata, typed parameters, authorization, controlled execution, shared `POST /launch` handler | `ActionID`, `ActionKind`, `ActionDescriptor`, `ActionParameters`, `AppLaunchParameters`, `ActionOutcome`, `ActionRegistry`, `AppLaunchExecutor`, `AppLaunchAdapter`, `AppLaunchRoute` |
-| `Tests/oldphonedeckTests/` | — | Swift Testing parser/resource, action-boundary and HTTP/WS/WSS/TLS socket tests; no app startup | Parsing, lifecycle, budget, handoff, audio, action and launch-route tests |
+| `Configuration.swift` | — | Configuration V1 codec (M2.4, **unwired**): document model, pure decode/encode, in-memory legacy migration. No file I/O, no `Apps`, no executor | `ControlID`, `ControlPresentation`, `ControlParameters`, `DeckControl`, `DeckConfigurationV1`, `ConfigurationError`, `ConfigurationInput`, `ConfigurationState`, `ConfigurationDecoder`, `ConfigurationEncoder`, `ConfigurationMigrator` |
+| `Tests/oldphonedeckTests/` | — | Swift Testing parser/resource, action-boundary, configuration-codec and HTTP/WS/WSS/TLS socket tests; no app startup | Parsing, lifecycle, budget, handoff, audio, action, launch-route and codec tests |
 | `TLS.swift` | — | Private CA, server cert, PKCS#12 identity, TLS/WS parameters | `LocalTLS.identity/makeCA/makeServerCert/loadIdentity/parameters` |
 | `PhoneMedia.swift` | — | Bounded WSS ingest/lifecycle, latest-frame cache, audio playback | `PhoneMediaServer`, `MediaWebSocketConnection`, `AudioOut` |
 | `Control.swift` | 116 | App enumeration/icons/launch, launcher config, Claude deep link, synthetic keys | `Input`, `Apps`, `Launcher`, `Claude` |
@@ -355,7 +358,7 @@ MEDIUM
 |---|---|
 | Response-send, stalled-MJPEG-send, pre-ready WS handshake and authenticated WS idle timeouts remain deferred to **M5**. Resource counts are bounded; stalled clients can still occupy the available slots. | `HTTPServer.swift`, `PhoneMedia.swift` |
 | `server.key` and `server.p12` are `0644`; PKCS#12 password hardcoded; CA downloadable unauthenticated | `TLS.swift`, `/oldphonedeck.mobileconfig` |
-| Configuration is a bare `[String]` with no version; unparseable and absent are indistinguishable | `Launcher.selected()` |
+| Configuration **at runtime** is still a bare `[String]` with no version; unparseable and absent are indistinguishable. M2.4 adds an unwired V1 codec that distinguishes absent, unreadable, legacy, V1, malformed and unsupported (ADR-015); this finding closes only when **M2.5** wires it into the read path | `Launcher.selected()`, `Configuration.swift` |
 | Frontend geometry and `APP_SLOTS` are hardcoded | `index.html` `layout`, `renderKeys` |
 | One serial queue serves both listeners; full app-directory rescan per icon/launch request | `HTTPServer.queue`, `Apps.list()` |
 | Action authorization compares exact catalog path **strings** and pins no filesystem object. Catalog entries may be symlinks, and the target could change before the asynchronous launch (TOCTOU). Inherited unchanged from the pre-M2.3 route; no HTTP-only exploit identified. Resolution or acceptance is **M5** — see the M2.3 implementation note in `docs/DECISIONS.md`. | `Apps.list/isKnown/launch`, `ActionRegistry.dispatch` |
@@ -425,27 +428,30 @@ These are structural, not bugs to fix in passing:
 1. One migrated action. `ActionRegistry` exists, but `app.launch` is its only registered
    action; every other verb is still a `case` in one `switch`, so a new capability costs a
    new endpoint, a new client call and a new key type until it is migrated onto the boundary.
-2. Configuration cannot express anything except "an ordered list of app paths".
+2. Configuration **in use** cannot express anything except "an ordered list of app paths". A V1
+   document model that can express ordered controls, stable ids, action identifiers, typed
+   parameters and presentation metadata now exists in `Configuration.swift` (M2.4, ADR-015), but
+   it is unwired: nothing reads or writes it, so the runtime format is unchanged.
 3. No collector abstraction — `Stats` and `Music` happen to follow the same pattern, but
    `/stats` composes them by hand.
 4. M2.1 bounds HTTP parsing and moves auth before bodies; M2.2 bounds connection/media
    resources; M2.3 puts app launch behind an authorized action boundary (accepted).
    One token still has one scope, and the legacy action-shaped routes are not migrated.
 5. The frontend has no data model for controls; the layout is arithmetic.
-6. Parser/admission, HTTP/media lifecycle, resource accounting, media bounds and the action
-   boundary have Swift Testing coverage. Hardware playback and other modules lack isolated
-   tests; there is no CI.
+6. Parser/admission, HTTP/media lifecycle, resource accounting, media bounds, the action
+   boundary and the configuration codec have Swift Testing coverage. Hardware playback and other
+   modules lack isolated tests; there is no CI.
 
 ## 13. PLANNED extension seams
 
-Approved direction (see `docs/DECISIONS.md` ADR-005 to ADR-010). Except for the explicitly
-marked M2.1 admission, M2.2 resource and M2.3 action-boundary portions, these seams are
-**not implemented**.
+Approved direction (see `docs/DECISIONS.md` ADR-005 to ADR-010, and ADR-015 for the
+configuration document shape). Except for the explicitly marked M2.1 admission, M2.2 resource,
+M2.3 action-boundary and M2.4 codec portions, these seams are **not implemented**.
 
 | Seam | Milestone | Shape |
 |---|---|---|
 | **Action boundary** | M2 (foundational) — `app.launch` implemented and accepted in M2.3 | An internal representation of an approved action — identifier, display metadata, validated parameters, server-side execution allowlist. `ActionRegistry` now carries this for app launch only; Shortcuts, developer and Git actions become implementations of it in later slices. No arbitrary shell execution. |
-| **Versioned configuration** | M2 (foundational) | A versioned document under `~/.oldphonedeck` that can express controls, action types and metadata, with explicit migration that preserves the existing `launcher.json` selection. |
+| **Versioned configuration** | M2 (foundational) — V1 codec implemented in M2.4 (**unwired**, ADR-015); storage integration and cutover are M2.5 | A versioned document under `~/.oldphonedeck` that can express controls, action types and metadata, with explicit migration that preserves the existing `launcher.json` selection. `Configuration.swift` now carries the V1 document model (`DeckConfigurationV1`, `DeckControl`, `ControlID`, `ControlParameters`, `ControlPresentation`), a pure decoder over `ConfigurationInput` that separates absent / unreadable / legacy / V1 / malformed / unsupported-version, a self-verifying encoder, and an in-memory `migrateToV1` / `legacySelection` pair. It opens no file, consults no `Apps` and reaches no executor, so decoding confers no authority. Nothing calls it yet: `Launcher`, `/launcher` and the client are unchanged and `launcher.json` is untouched. |
 | **Ingress / auth hardening** | M2.1 admission and M2.2 resource bounds implemented; remaining M2 → M5 | Bounded headers/body, early query-token auth, receive/auth deadlines, connection/media caps and bounded frame/audio buffering. M2.2 passed independent review and Steering acceptance. Action authorization exists for app launch (M2.3, accepted); the remaining routes and the unscoped token belong to M5's independent T3 assessment and hardening. |
 | **Collector boundary** | Just-in-time with M4 telemetry | Registry of collectors (each with its own queue) composed into one snapshot, so Git/agent status does not edit the route table. |
 | **Frontend data model** | M3 | Data-driven controls and widgets, layout described rather than hand-computed — while staying one ES5 file with no framework. |
