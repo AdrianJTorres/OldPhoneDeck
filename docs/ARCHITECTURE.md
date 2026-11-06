@@ -5,8 +5,8 @@ M2.1 bounded HTTP admission, M2.2 media/resource limits and the M2.3 approved-ac
 boundary, and explicitly labelled **planned** extension seams. The upstream baseline is
 `e622184`; no slice is completion of M2 or the M5 review. M2.2 passed independent review
 and targeted iPhone 11 camera acceptance and was accepted by Steering; physical audio and
-continuous live MJPEG were not verified. M2.3 is implemented and **pending independent
-review and Steering acceptance**.
+continuous live MJPEG were not verified. M2.3 passed initial and focused independent review and was **accepted by Steering on
+2026-11-06**. No physical iPhone 11 test was claimed for the M2.3 slice.
 
 - Current behavior: §1–§8, §10–§11
 - Known limitations: §12
@@ -180,7 +180,7 @@ delivery block. A stalled HTTP queue cannot accumulate a block/data pair per inc
 frame. During delivery there can additionally be one executing frame; the frame cache and
 each viewer's in-flight send remain separately bounded.
 
-**Action boundary (M2.3, pending review).** `ActionRegistry` (`ActionRegistry.swift`) is the
+**Action boundary (M2.3, accepted).** `ActionRegistry` (`ActionRegistry.swift`) is the
 only path from a caller to an approved macOS action. `ActionID` validates identifier syntax
 (lowercase dotted name, at most 64 bytes) and the identifier must then name an entry in a
 server-authored descriptor table; there is no registration entry point, so a client can name
@@ -322,7 +322,7 @@ recognition, and trust for the OldPhoneDeck CA.
 launch or icon rendering (`Apps.isKnown`), re-filtering of config on save, no HTML
 injection (dynamic text goes through `textContent`), no user-controlled argv in any
 `Process`, fixed absolute binary paths, frame-drop backpressure on both media paths,
-`0600` on the token and CA key, and — since M2.3, pending review — one typed action
+`0600` on the token and CA key, and — since M2.3, accepted — one typed action
 boundary that resolves a server-authored identifier, validates parameters and authorizes
 against the Mac's own app catalog before a controlled executor runs. That boundary covers
 app launch only; the other action-shaped routes still validate inline in the switch.
@@ -333,7 +333,7 @@ interchangeable:
 - **M2 — minimum foundational hardening.** Request/body/header limits enforced *before*
   large buffering, basic connection and resource limits, and the minimum
   action-authorization boundary that must exist before higher-consequence actions. M2.1 and
-  M2.2 delivered the ingress and resource bounds; M2.3 (implemented, pending independent
+  M2.2 delivered the ingress and resource bounds; M2.3 (accepted after independent
   review and Steering acceptance) delivers the action-authorization boundary for app launch.
 - **M5 — independent review and completion.** Codex T3 assessment of authentication,
   ingress, action authorization and process execution; remaining hardening; resolution or
@@ -429,7 +429,7 @@ These are structural, not bugs to fix in passing:
 3. No collector abstraction — `Stats` and `Music` happen to follow the same pattern, but
    `/stats` composes them by hand.
 4. M2.1 bounds HTTP parsing and moves auth before bodies; M2.2 bounds connection/media
-   resources; M2.3 puts app launch behind an authorized action boundary (pending review).
+   resources; M2.3 puts app launch behind an authorized action boundary (accepted).
    One token still has one scope, and the legacy action-shaped routes are not migrated.
 5. The frontend has no data model for controls; the layout is arithmetic.
 6. Parser/admission, HTTP/media lifecycle, resource accounting, media bounds and the action
@@ -444,9 +444,9 @@ marked M2.1 admission, M2.2 resource and M2.3 action-boundary portions, these se
 
 | Seam | Milestone | Shape |
 |---|---|---|
-| **Action boundary** | M2 (foundational) — `app.launch` implemented in M2.3, pending review | An internal representation of an approved action — identifier, display metadata, validated parameters, server-side execution allowlist. `ActionRegistry` now carries this for app launch only; Shortcuts, developer and Git actions become implementations of it in later slices. No arbitrary shell execution. |
+| **Action boundary** | M2 (foundational) — `app.launch` implemented and accepted in M2.3 | An internal representation of an approved action — identifier, display metadata, validated parameters, server-side execution allowlist. `ActionRegistry` now carries this for app launch only; Shortcuts, developer and Git actions become implementations of it in later slices. No arbitrary shell execution. |
 | **Versioned configuration** | M2 (foundational) | A versioned document under `~/.oldphonedeck` that can express controls, action types and metadata, with explicit migration that preserves the existing `launcher.json` selection. |
-| **Ingress / auth hardening** | M2.1 admission and M2.2 resource bounds implemented; remaining M2 → M5 | Bounded headers/body, early query-token auth, receive/auth deadlines, connection/media caps and bounded frame/audio buffering. M2.2 passed independent review and Steering acceptance. Action authorization exists for app launch (M2.3, pending review); the remaining routes and the unscoped token belong to M5's independent T3 assessment and hardening. |
+| **Ingress / auth hardening** | M2.1 admission and M2.2 resource bounds implemented; remaining M2 → M5 | Bounded headers/body, early query-token auth, receive/auth deadlines, connection/media caps and bounded frame/audio buffering. M2.2 passed independent review and Steering acceptance. Action authorization exists for app launch (M2.3, accepted); the remaining routes and the unscoped token belong to M5's independent T3 assessment and hardening. |
 | **Collector boundary** | Just-in-time with M4 telemetry | Registry of collectors (each with its own queue) composed into one snapshot, so Git/agent status does not edit the route table. |
 | **Frontend data model** | M3 | Data-driven controls and widgets, layout described rather than hand-computed — while staying one ES5 file with no framework. |
 

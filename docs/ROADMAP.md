@@ -73,7 +73,7 @@ checks. Real HTTPS/WSS use a temporary identity imported only into memory; no us
 configuration, keychain certificates or audio hardware are touched. Tests do not start
 the full app.
 
-M2.3 — App Action Boundary: **IN PROGRESS** — implemented on `m2.3/app-action-boundary`
+M2.3 — App Action Boundary: **COMPLETE**, accepted by Steering (2026-11-06). Implemented on `m2.3/app-action-boundary`
 (`8097c28` implementation, `009e02d` test hardening, `d83ae49` documentation, plus a
 review-findings closure commit). Adds `Sources/oldphonedeck/ActionRegistry.swift`: a typed,
 server-authoritative action boundary with a validated identifier, server-authored display
@@ -85,15 +85,16 @@ meaning accepted-and-dispatched rather than activated. No new endpoint, no persi
 configuration schema, no token scope, no plugin loader and no UI change; `/media`,
 `/claude`, `/speedtest`, `/launcher` and `/icon` remain legacy and are not migrated.
 
-Independent Codex review: **PASS WITH MINOR FINDINGS** — zero blockers, zero major, three
-minor. All three are closed on the branch: `POST /launch` wiring was extracted into one
+Independent Codex review: initial **PASS WITH MINOR FINDINGS** (zero blockers/majors,
+three minor); focused independent re-review of correction commit `6d8cd813690e6d159562c8307c096fd8738023e9`
+returned **PASS** (zero new findings). All three original findings were closed: `POST /launch` wiring was extracted into one
 shared handler (`AppLaunchRoute.handle`) that production and the integration tests call
 identically; the last test that held the real `Apps.launch` executor now injects a recording
 callback, so no automated test can reach NSWorkspace even under an authorization regression;
 and the inherited filesystem trust limits (exact path-string matching, symlinked catalog
 entries, no object pinning, a TOCTOU window before the asynchronous launch) are recorded as
-residual **M5** risk. M2.3 is still **not accepted** — Steering acceptance, and any re-review
-the reviewer requires, remain outstanding.
+residual **M5** risk. Steering accepted M2.3 for integration after the independent
+closure review. The residual filesystem risk remains open for M5.
 
 Validation: all **90 Swift Testing tests** pass (the 63 retained M2.1/M2.2 tests plus 27
 new ones, four of them parameterized into 44 cases), covering action identity, parameters,
@@ -111,8 +112,8 @@ physical iPhone acceptance is claimed for this slice.
 M2.4 — Configuration V1 codec: **NOT STARTED** and not mandated by M2.3. It is the next
 candidate slice under ADR-007 and begins only on an explicit Steering brief.
 
-M2 is **not complete**. The Action Registry now exists for app launch (M2.3, pending
-review); versioned configuration has not started.
+M2 is **not complete**. M2.1, M2.2 and M2.3 are accepted; the Action Registry currently
+supports only app launch, and versioned configuration has not started.
 M5 remains the independent security/reliability review. Physical iPhone 11 checks passed
 for WSS streaming, camera frames reaching the Mac, fresh-frame delivery, front/back
 switching, reconnection and deck polling. Continuous live MJPEG was not confirmed on

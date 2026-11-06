@@ -277,8 +277,8 @@ No library target, dependency or auth scheme was added.
 This implements the accepted direction without changing ADR-008. M2.1 has since completed
 independent Codex review (PASS, no findings) and Steering acceptance; the implementation
 commit is `4dd7fae593934053b5595b01cb52735351d42e18`. Connection and media/resource caps
-belong to M2.2, the Action boundary remains pending, and the M5 independent assessment is
-still outstanding.
+belong to M2.2; the Action boundary was subsequently delivered in M2.3, and the M5
+independent assessment is still outstanding.
 
 ---
 
@@ -320,8 +320,14 @@ certificates installed in a keychain, physical devices or BlackHole.
 
 ## Implementation note — ADR-005 / ADR-006 / M2.3
 
-**Status:** Implemented on `m2.3/app-action-boundary`. **Pending independent review and
-Steering acceptance** — not accepted, not merged. M2 as a whole remains IN PROGRESS.
+**Status:** Accepted by Steering · 2026-11-06. Implemented on
+`m2.3/app-action-boundary`; review-findings closure commit
+`6d8cd813690e6d159562c8307c096fd8738023e9`.
+Initial independent Codex review: PASS WITH MINOR FINDINGS (three minor, no major/blocker).
+All three were corrected, and focused Codex re-review returned PASS with zero findings.
+The full Swift Testing suite passed 90/90 (12 suites), and the release build passed
+without warnings. Physical iPhone 11 testing and a live real-app 200 acceptance-path
+check were not claimed for this slice. M2 as a whole remains IN PROGRESS.
 
 M2.3 implements the first slice of ADR-006 without changing ADR-005 or ADR-006, and
 without touching ADR-007 (versioned configuration is a later slice).

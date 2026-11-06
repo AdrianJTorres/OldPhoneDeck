@@ -153,7 +153,7 @@ and demonstrable.
 |---|---|
 | M0 — Baseline verification | **COMPLETE** — fork created, clone configured, baseline `e622184` builds and runs, verified on the iPhone 11 |
 | M1 — Understand & document | **COMPLETE** — M1.1 repository analysis and M1.2 project documentation both reviewed and accepted by Steering |
-| M2 — Foundations | **IN PROGRESS** — M2.1 Bounded HTTP Admission and M2.2 Bounded Media / Resources accepted by Steering; M2.3 App Action Boundary implemented on `m2.3/app-action-boundary`, pending independent review and Steering acceptance; M2.4 Configuration V1 codec not started |
+| M2 — Foundations | **IN PROGRESS** — M2.1 Bounded HTTP Admission and M2.2 Bounded Media / Resources accepted by Steering; M2.3 App Action Boundary accepted after independent Codex re-review; M2.4 Configuration V1 codec is next (not started) |
 | M3 — PhoneDeck UI | Not started |
 | M4 — Developer Deck | Not started |
 | M5 — Security & reliability | Not started |
