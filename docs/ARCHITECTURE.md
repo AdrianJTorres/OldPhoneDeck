@@ -7,8 +7,11 @@ boundary, and explicitly labelled **planned** extension seams. The upstream base
 and targeted iPhone 11 camera acceptance and was accepted by Steering; physical audio and
 continuous live MJPEG were not verified. M2.3 passed initial and focused independent review and was **accepted by Steering on
 2026-11-06**. No physical iPhone 11 test was claimed for the M2.3 slice. M2.4 (Configuration V1
-codec, ADR-015) is **in progress**: `Configuration.swift` exists as a pure, unwired codec, so
-runtime configuration behaviour is unchanged and still described by §10 and `Launcher`.
+codec, ADR-015) passed a final independent Codex review and was **accepted by Steering on
+2026-11-06**: `Configuration.swift` exists as a pure, **unwired** codec, so runtime configuration
+behaviour is unchanged and still described by §10 and `Launcher`. No physical iPhone 11 test was
+claimed for the M2.4 slice either, and no runtime migration occurred. Storage integration and the
+read-path cutover are M2.5, which is not started.
 
 - Current behavior: §1–§8, §10–§11
 - Known limitations: §12

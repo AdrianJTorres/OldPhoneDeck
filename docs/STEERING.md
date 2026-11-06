@@ -147,22 +147,25 @@ V1 is reached when, on the physical iPhone 11, a user can:
 V1 is not defined by feature count. It is defined by those six properties being true
 and demonstrable.
 
-## 9. Current status (2026-11-03)
+## 9. Current status (2026-11-06)
 
 | Milestone | State |
 |---|---|
 | M0 — Baseline verification | **COMPLETE** — fork created, clone configured, baseline `e622184` builds and runs, verified on the iPhone 11 |
 | M1 — Understand & document | **COMPLETE** — M1.1 repository analysis and M1.2 project documentation both reviewed and accepted by Steering |
-| M2 — Foundations | **IN PROGRESS** — M2.1 Bounded HTTP Admission and M2.2 Bounded Media / Resources accepted by Steering; M2.3 App Action Boundary accepted after independent Codex re-review; M2.4 Configuration V1 codec is next (not started) |
+| M2 — Foundations | **IN PROGRESS** — M2.1 Bounded HTTP Admission, M2.2 Bounded Media / Resources and M2.3 App Action Boundary accepted by Steering; **M2.4 Configuration V1 codec accepted 2026-11-06** after a final independent Codex PASS, with ADR-015 ratified. M2.4 ships an **unwired** codec, so no runtime migration occurred and `launcher.json` remains the runtime format. M2.5 (storage integration, read-path migration, any cutover) is **NOT STARTED** and unbriefed |
 | M3 — PhoneDeck UI | Not started |
 | M4 — Developer Deck | Not started |
 | M5 — Security & reliability | Not started |
 | M6 — PhoneDeck V1 | Not started |
 
 Physically verified on the iPhone 11: Safari loads the deck, Home Screen installation
-works, Mac application control works, Spotify control works.
+works, Mac application control works, Spotify control works. **No physical-device acceptance
+is claimed for M2.4** — it changes no endpoint, route or client behaviour.
 
 Known risks carried forward from M1 are recorded in `docs/ARCHITECTURE.md` §9, together
 with the milestone that owns each one. They are **open**, not fixed. M2 delivers the
 minimum ingress hardening and the allowlisted action boundary; M5 performs the independent
-review and the remaining hardening.
+review and the remaining hardening. The `ARCHITECTURE.md` §9 finding that absent and
+unparseable configuration are indistinguishable at runtime stays **open** and closes only
+when M2.5 wires the M2.4 codec into the read path.

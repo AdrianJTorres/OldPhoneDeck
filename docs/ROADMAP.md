@@ -109,11 +109,14 @@ together, removing the main-queue dispatch, and letting unknown identifiers fall
 registered action — were each observed to fail the relevant tests and were reverted. No
 physical iPhone acceptance is claimed for this slice.
 
-M2.4 — Configuration V1 codec: **IN PROGRESS**. Implemented on
-`m2.4/configuration-v1-codec` from Steering's approved design, recorded as **ADR-015**
-(proposed), which elaborates ADR-007 without superseding it. Adds
+M2.4 — Configuration V1 codec: **COMPLETE**. Accepted by Steering on 2026-11-06 after the final
+independent Codex review returned **PASS** with no unresolved major or minor findings. Implemented
+on `m2.4/configuration-v1-codec` from Steering's approved design, recorded as **ADR-015**
+(accepted), which elaborates ADR-007 without superseding it. Adds
 `Sources/oldphonedeck/Configuration.swift`: a pure, **unwired** codec for a versioned
-configuration document, plus in-memory legacy migration.
+configuration document, plus in-memory legacy migration. Acceptance covers the codec, its tests
+and its documentation only; **no physical-device acceptance is claimed**, because no endpoint,
+route or client behaviour changed and there was nothing on a device to exercise.
 
 The V1 document is `{"version": 1, "controls": […]}`; the legacy launcher format stays a bare
 JSON array, so the root type alone discriminates them. A control carries a stable opaque `id`,
@@ -151,15 +154,18 @@ never make an action executable and authorization stays in `ActionRegistry.dispa
 `ConfigurationError` cases carry no payload from the document. Caps are 1 MiB and 4096
 controls, and the byte cap bounds what can be stored rather than only what can be read.
 
-**Not wired, and not accepted.** Nothing calls the codec: `Control.swift`, `ActionRegistry.swift`,
-`main.swift`, HTTP routing, `web/index.html` and the real `~/.oldphonedeck/launcher.json` are
-untouched, no endpoint changed, and runtime configuration behaviour is identical to M2.3. The
-`ARCHITECTURE.md` §9 finding that absent and unparseable are indistinguishable therefore
-remains **open** and closes only when M2.5 wires the codec into the read path. M2.4 stays
-IN PROGRESS until the corrected codec passes independent re-review and Steering acceptance;
-M2.5 (storage integration, read-path migration and any cutover) has not been briefed.
+**Not wired — and accepted as not wired.** Nothing calls the codec: `Control.swift`,
+`ActionRegistry.swift`, `main.swift`, HTTP routing, `web/index.html` and the real
+`~/.oldphonedeck/launcher.json` are untouched, no endpoint changed, and runtime configuration
+behaviour is identical to M2.3. Steering accepted M2.4 on exactly that basis: this milestone
+delivers the boundary one milestone ahead of the feature that uses it, not the feature. The
+`ARCHITECTURE.md` §9 finding that absent and unparseable are indistinguishable therefore remains
+**open** and closes only when M2.5 wires the codec into the read path. **No runtime migration
+occurred** — `migrateToV1` and `legacySelection` are in-memory and unreferenced, and the legacy
+`launcher.json` stays the runtime format under ADR-007. M2.5 (storage integration, read-path
+migration and any cutover) has **not been started** and has not been briefed.
 
-Validation so far: all **248 Swift Testing tests** pass (the 90 retained M2.1–M2.3 tests plus
+Validation at acceptance: all **248 Swift Testing tests** pass (the 90 retained M2.1–M2.3 tests plus
 158 new ones across 17 new suites, many parameterized), covering input states, legacy decode,
 V1 decode, version precedence, document strictness and both caps, control identity, configured
 actions, parameters, presentation, encoder strictness, round trips, migration, reverse
@@ -208,9 +214,8 @@ leniency tests assert both halves — that `JSONSerialization` still accepts the
 codec does not — so reverting to a lenient reader fails loudly. The schema, the six-state model
 and the migration rules are unchanged; what changed is which bytes are accepted. Sequences that
 were never RFC 8259 documents are now malformed rather than silently read, and a document whose
-canonical form exceeds the cap is now rejected rather than accepted as unsaveable. M2.4 remains
-**IN PROGRESS** and ADR-015 remains **Proposed**: these corrections have not been re-reviewed or
-accepted, and nothing is wired.
+canonical form exceeds the cap is now rejected rather than accepted as unsaveable. At the time
+these corrections had not been re-reviewed; the re-review that followed is recorded next.
 
 Re-review returned **FAIL** on one remaining major defect, in `ExactJSONNumber.exactInteger`. The
 exponent accumulator stopped updating past a fixed magnitude of 1 000 000 and then carried the
@@ -227,12 +232,54 @@ mantissa alone — nil if nonzero, `0` if zero. Seven tests cover the two reprod
 bound, exponents a million digits long, long runs of leading zeros, and zero under an absurd
 exponent; two of them assert that a large mantissa and a large exponent which genuinely cancel
 still read as exactly 1, so rejecting every large exponent cannot pass. The scanner, the schema,
-the decoder states and the canonical size contract are unchanged. M2.4 remains **IN PROGRESS**
-and ADR-015 remains **Proposed** pending re-review; M2.5 has not been started.
+the decoder states and the canonical size contract are unchanged.
 
-M2 is **not complete**. M2.1, M2.2 and M2.3 are accepted; the Action Registry currently
-supports only app launch, and versioned configuration exists only as an unwired codec pending
-independent review.
+A final independent Codex review of `ad46842` returned **PASS** on 2026-11-06 with no unresolved
+major or minor findings, and Steering accepted M2.4 and ratified ADR-015 the same day. The four
+defects recorded above are **closed**; they are retained here as historical evidence of what the
+review process caught, not as open findings.
+
+**Acceptance evidence.**
+
+- **248 Swift Testing tests in 29 suites pass**, with no recorded issues, no errors and no
+  compiler warnings — the 90 retained M2.1–M2.3 tests plus 158 new ones in 17 new suites.
+- **`swift build -c release` completes with zero warnings** from a clean tree.
+- **Exact numeric parsing verified**: literals that widen to the same `Double` are distinguished,
+  `1.0000000000000001` and `0.99999999999999999` are not version 1, `9007199254740993` is reported
+  as itself, `Int.max` reads as a newer version rather than as corruption, one past it is
+  malformed, and exponents large enough to cancel a million-digit fraction are decided by a bound
+  derived from the mantissa length.
+- **Strict JSON validated**: trailing commas, duplicate names, trailing content, raw control
+  characters, ill-formed UTF-8, lone surrogates and nesting past 64 are each rejected, and every
+  divergence test asserts both halves — that `JSONSerialization` still accepts the input and that
+  the codec does not.
+- **Canonical-size invariant validated**: a document that fits the cap as read and overflows it
+  once written is rejected, and everything the decoder accepts is proven writable back inside the
+  same cap through the one shared canonical form.
+- **Duplicate-name performance corrected**: detection moved from a per-name linear scan to a set
+  local to each object, removing an O(n²) path the scanner reached before any schema bound. A
+  90 000-member object near the document cap went from not completing within six minutes to
+  0.77 s, while a large mantissa and a large exponent that genuinely cancel still read as exactly 1.
+- **Lossless legacy migration validated** by `migrateToV1(legacySelection(v1)!) == .success(v1)`
+  for every non-nil result, and by a positive table that cannot pass by rejecting every fixture.
+  Order, duplicates, empty strings and an intentionally empty array are all preserved.
+- Fifteen mutations across the three review rounds were each observed red and reverted from file
+  backups verified byte-identical by SHA-256; `git checkout` and `git reset` were never used
+  against uncommitted work.
+- **No physical-device acceptance is claimed** for M2.4, and none was possible: no endpoint, route
+  or client behaviour changed, so there was nothing on the iPhone 11 to exercise.
+
+**Nonblocking documentation debt.** `AGENTS.md` §2 (Source layout) has no `Configuration.swift`
+row. That file is protected against agent edits in this workflow, so the row could not be added
+across any of the four M2.4 commits; it is recorded here for a human edit. It does not block
+acceptance, because `docs/ARCHITECTURE.md` §3 (File and module map) carries the equivalent row and
+lists the codec's exported types.
+
+M2.5 remains **NOT STARTED** and unbriefed. M2 overall remains **IN PROGRESS**.
+
+M2 is **not complete**. M2.1, M2.2, M2.3 and M2.4 are accepted; the Action Registry currently
+supports only app launch, and versioned configuration exists only as an unwired, accepted codec —
+storage integration and the read-path cutover are M2.5.
 M5 remains the independent security/reliability review. Physical iPhone 11 checks passed
 for WSS streaming, camera frames reaching the Mac, fresh-frame delivery, front/back
 switching, reconnection and deck polling. Continuous live MJPEG was not confirmed on

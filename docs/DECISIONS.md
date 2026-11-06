@@ -418,10 +418,15 @@ no test constructs the production `ActionRegistry()`.
 
 ## ADR-015 — Configuration V1 document shape
 
-**Status:** Proposed · 2026-11-06 · Target: M2.4. Pending independent Codex review and
-Steering ratification. This **elaborates** ADR-007, which stays accepted and unedited; it
-does not supersede it. ADR-007 decided that configuration becomes a versioned document with
-explicit migration. This record decides what that document looks like.
+**Status:** Accepted by Steering · 2026-11-06 · Target: M2.4. The final independent Codex
+review returned **PASS** on 2026-11-06 with no unresolved major or minor findings. Two earlier
+review rounds found four defects — a `Double`-widened version, a size cap measured only on the
+bytes as read, a lenient `JSONSerialization` reader, and a truncated exponent accumulator that
+let `10^9000000` read as version 1. All four are closed; they are kept as historical evidence in
+the ROADMAP M2.4 entry and in rules 6 and 7 below, not as open findings. This **elaborates**
+ADR-007, which stays accepted and unedited; it does not supersede it. ADR-007 decided that
+configuration becomes a versioned document with explicit migration. This record decides what that
+document looks like.
 
 **Context.** `launcher.json` is a bare JSON array of application paths, and
 `Launcher.selected()` returns `nil` for an absent file, an unreadable file and an
