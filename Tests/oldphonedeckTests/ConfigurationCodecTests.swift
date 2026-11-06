@@ -682,8 +682,9 @@ struct MigrationTests {
             return
         }
         #expect(migrated.controls.map(\.id.rawValue) == ["app-1", "app-2", "app-3"])
-        #expect(migrated.controls[0].parameters == .appPath(""))
-        #expect(migrated.controls[2].parameters == .appPath(""))
+        // Compared as a whole list rather than by subscript, so a migration that dropped an entry
+        // fails this expectation instead of trapping on an out-of-range index.
+        #expect(migrated.controls.map(\.parameters) == [.appPath(""), .appPath("/a.app"), .appPath("")])
     }
 
     @Test func idsArePositionalAndOneBased() {

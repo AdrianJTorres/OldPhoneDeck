@@ -109,11 +109,61 @@ together, removing the main-queue dispatch, and letting unknown identifiers fall
 registered action — were each observed to fail the relevant tests and were reverted. No
 physical iPhone acceptance is claimed for this slice.
 
-M2.4 — Configuration V1 codec: **NOT STARTED** and not mandated by M2.3. It is the next
-candidate slice under ADR-007 and begins only on an explicit Steering brief.
+M2.4 — Configuration V1 codec: **IN PROGRESS**. Implemented on
+`m2.4/configuration-v1-codec` from Steering's approved design, recorded as **ADR-015**
+(proposed), which elaborates ADR-007 without superseding it. Adds
+`Sources/oldphonedeck/Configuration.swift`: a pure, **unwired** codec for a versioned
+configuration document, plus in-memory legacy migration.
+
+The V1 document is `{"version": 1, "controls": […]}`; the legacy launcher format stays a bare
+JSON array, so the root type alone discriminates them. A control carries a stable opaque `id`,
+an `ActionID`-validated `action`, flat `String → String` `parameters` and an optional bounded
+`presentation.title`. `ConfigurationDecoder.decode` takes `ConfigurationInput`
+(`.absent` / `.unreadable` / `.data`) and returns one of six distinguishable states — absent,
+unreadable, legacy, V1, malformed and unsupported-version — replacing the single `nil` that
+`Launcher.selected()` returns for three different situations. The version is identified before
+any V1 structural or unknown-key check, so a newer document reads as newer rather than as a
+pile of unknown keys; unknown keys are rejected; `version > 1` is unsupported rather than
+malformed, and `version < 1` is malformed rather than "from the future". The encoder is as
+strict as the decoder because it does not restate the decoder's rules: it serializes, then
+requires its own output to decode back to the value it was given.
+
+`ConfigurationMigrator.migrateToV1` is purely syntactic — no `Apps.list()`, no filtering, no
+sorting, no deduplication, no truncation — and preserves order, duplicates, empty strings and
+an intentionally empty array; an entry that cannot be represented fails the whole migration
+loudly instead of vanishing from it. Ids are positional (`app-1`, `app-2`, …) because a legacy
+array may hold the same path twice. `legacySelection` is the exact inverse and returns `nil`
+rather than a lossy subset. An action that is syntactically valid but unregistered decodes with
+inert `.unmodeled` parameters, which have no conversion to `ActionParameters`, so a document can
+never make an action executable and authorization stays in `ActionRegistry.dispatch`.
+`ConfigurationError` cases carry no payload from the document. Caps are 1 MiB and 4096 controls.
+
+**Not wired, and not accepted.** Nothing calls the codec: `Control.swift`, `ActionRegistry.swift`,
+`main.swift`, HTTP routing, `web/index.html` and the real `~/.oldphonedeck/launcher.json` are
+untouched, no endpoint changed, and runtime configuration behaviour is identical to M2.3. The
+`ARCHITECTURE.md` §9 finding that absent and unparseable are indistinguishable therefore
+remains **open** and closes only when M2.5 wires the codec into the read path. M2.4 stays
+IN PROGRESS until independent Codex review and Steering acceptance; M2.5 (storage integration,
+read-path migration and any cutover) has not been briefed.
+
+Validation so far: all **202 Swift Testing tests** pass (the 90 retained M2.1–M2.3 tests plus
+112 new ones across 14 new suites, many parameterized), covering input states, legacy decode,
+V1 decode, version precedence, document strictness and both caps, control identity, configured
+actions, parameters, presentation, encoder strictness, round trips, migration, reverse
+conversion and security invariants. Codec tests open no file and need no home-directory
+isolation; the action-boundary checks reuse the injecting `testRegistry` helper, so no test
+constructs the production `ActionRegistry()`. `swift build -c release` passes with no warnings.
+Seven mutations — hoisting the unknown-key check above the version check, dropping empty legacy
+entries during migration, making `legacySelection` skip unrepresentable controls, collapsing
+`.unreadable` into `.absent`, removing the encoder's round-trip verification, making `.unmodeled`
+convertible to `ActionParameters`, and removing the control-count cap — were each observed to
+fail the relevant tests and were reverted, leaving a clean working tree. No physical iPhone 11
+acceptance is claimed or possible for this slice, because no endpoint or client behaviour
+changed.
 
 M2 is **not complete**. M2.1, M2.2 and M2.3 are accepted; the Action Registry currently
-supports only app launch, and versioned configuration has not started.
+supports only app launch, and versioned configuration exists only as an unwired codec pending
+independent review.
 M5 remains the independent security/reliability review. Physical iPhone 11 checks passed
 for WSS streaming, camera frames reaching the Mac, fresh-frame delivery, front/back
 switching, reconnection and deck polling. Continuous live MJPEG was not confirmed on
