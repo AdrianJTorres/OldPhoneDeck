@@ -84,12 +84,16 @@ struct ActionRegistry {
     private let launchApp: (String) -> Void
 
     /// Production wiring: the Mac's own approved application catalog and the existing
-    /// main-queue launch. The injected initializer keeps the boundary testable without
-    /// touching NSWorkspace or the filesystem.
+    /// main-queue launch. This is the only registry that can reach NSWorkspace, so automated
+    /// tests must build one through the injecting initializer below instead — a test that
+    /// holds the real executor could open an application if an authorization gate regressed.
     init() {
         self.init(approvedAppPath: Apps.isKnown, launchApp: { AppLaunchExecutor.schedule($0) })
     }
 
+    /// Injecting initializer: the authorization policy and the execution callback are
+    /// supplied by the caller, which is what makes the boundary testable without touching
+    /// NSWorkspace. Production passes `Apps.isKnown` and `AppLaunchExecutor.schedule`.
     init(approvedAppPath: @escaping (String) -> Bool, launchApp: @escaping (String) -> Void) {
         self.isApprovedAppPath = approvedAppPath
         self.launchApp = launchApp
@@ -135,5 +139,25 @@ enum AppLaunchAdapter {
         let outcome = registry.dispatch(.appLaunch, parameters: .appPath(params["path"] ?? ""))
         guard outcome == .dispatched else { return HTTPFailure(status: 404, message: "unknown app") }
         return nil
+    }
+}
+
+/// The one `POST /launch` handler, shared by the production route switch and the integration
+/// tests, so a test cannot pass against wiring production does not use.
+enum AppLaunchRoute {
+    /// Runs the M2.1 parameter check, asks the registry to authorize and dispatch, and
+    /// answers with the historical response shape. Callers reach this only after
+    /// `DeckRoute.admit`; nothing else about the route is assumed.
+    static func handle(_ request: HTTPRequest, registry: ActionRegistry, on connection: HTTPConnection) {
+        // Validation is repeated here rather than trusted to the route switch's generic pass:
+        // no caller may reach the adapter without it. `DeckRoute.validateParameters` is pure,
+        // so running it twice for this route changes nothing but cost.
+        if let failure = DeckRoute.validateParameters(request) {
+            return connection.respond(failure.status, text: failure.message)
+        }
+        if let failure = AppLaunchAdapter.handle(request.params, registry: registry) {
+            return connection.respond(failure.status, text: failure.message)
+        }
+        connection.respond(text: "ok")
     }
 }

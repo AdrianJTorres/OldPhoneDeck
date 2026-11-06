@@ -364,15 +364,46 @@ automation or Accessibility permission, or require a physical device.
 single capability rather than a general framework; adding an action is a deliberate code
 change, not configuration. Path comparison stays exact string membership with no
 normalization, matching pre-M2.3 behaviour, so symlinked or traversal-spelled variants of
-an approved path are rejected rather than resolved. Each dispatch re-runs the existing
-application-directory scan (`Apps.list()`), an unchanged cost. Rejection reasons are
-distinguished internally but collapse to one `404` on the wire for compatibility. Metadata
-is not exposed to the client and not persisted.
+an approved path are rejected rather than resolved (see the next section). Each dispatch
+re-runs the existing application-directory scan (`Apps.list()`), an unchanged cost.
+Rejection reasons are distinguished internally but collapse to one `404` on the wire for
+compatibility. Metadata is not exposed to the client and not persisted.
 
-**Evidence.** 89 Swift Testing tests pass (63 retained M2.1/M2.2 plus 26 new, of which four
+**Filesystem trust limits (inherited; residual risk recorded for M5).** Authorization
+compares exact path **strings** against the catalog that `Apps.list()` builds with
+`contentsOfDirectory` over five directories and a `.app` suffix filter (`Control.swift`).
+It does not resolve, canonicalize or pin a filesystem object: no `realpath`, no
+inode/device identity, no `O_NOFOLLOW`, no bundle-identifier or code-signing check, and no
+re-check at execution time. Catalog entries may themselves be **symlinks** — on this Mac
+`/Applications/Safari.app` links to `../System/Cryptexes/App/System/Applications/Safari.app`
+— and `Apps.launch` passes the string to `NSWorkspace.openApplication`, which resolves it
+when it runs. Because execution is scheduled asynchronously on the main queue, a target
+could in principle be substituted between authorization and launch (a TOCTOU window), so an
+authorized path could end up naming a different bundle than the one that was enumerated.
+
+This is **inherited unchanged** from the pre-M2.3 route, which performed the same
+`Apps.isKnown` string check and the same asynchronous `NSWorkspace` launch. M2.3 moves the
+check inside the action boundary; it neither widens nor narrows what the filesystem is
+trusted to do. Exploiting the window requires the ability to modify the local filesystem in
+a scanned directory (`/Applications`, `/Applications/Utilities`, `/System/Applications`,
+`/System/Applications/Utilities` or the user's `~/Applications`) — an attacker with that
+write access already has local code-execution capability on macOS, and the system
+directories are root-owned and SIP-protected. **No new HTTP-only exploit was identified:**
+nothing a remote client can send influences which paths the catalog contains, and unapproved
+or near-miss strings are still rejected before execution.
+
+M2.3 therefore does **not** redesign the filesystem policy: no path normalization, no
+symlink resolution, no object pinning, and no change to `Apps.list()`, `Apps.isKnown`,
+`Apps.launch` or launcher persistence. Resolution or explicit acceptance of this residual
+risk belongs to **M5** (independent T3 review of action authorization and process
+execution), where it should be assessed together with the unscoped-token finding.
+
+**Evidence.** 90 Swift Testing tests pass (63 retained M2.1/M2.2 plus 27 new, of which four
 are parameterized into 44 cases); `swift build -c release` succeeds with no new warnings;
 the release binary was exercised on isolated ports with rejection paths only, so no
-application was launched and the real configuration was not written. Four mutations —
-removing the catalog gate, removing parameter validation, removing the main-queue dispatch,
-and letting unknown identifiers fall back to the registered action — each turned the
-relevant tests red and were reverted.
+application was launched and the real configuration was not written. Mutations — removing
+the catalog gate, removing parameter validation, removing the main-queue dispatch, and
+letting unknown identifiers fall back to the registered action — each turned the relevant
+tests red and were reverted; with the catalog gate **and** parameter validation removed
+simultaneously, the suite still fails closed with no test able to reach NSWorkspace, because
+no test constructs the production `ActionRegistry()`.

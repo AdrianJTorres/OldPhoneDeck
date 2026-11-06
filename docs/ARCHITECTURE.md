@@ -83,7 +83,7 @@ binary, stop it with Ctrl-C.
 | `HTTPServer.swift` | — | Bounded receive/deadlines, one request per connection, responses, MJPEG | `HTTPConnection`, `HTTPServer` |
 | `HTTPParsing.swift` | — | Incremental framing; application route metadata and admission | `HTTPRequestParser`, `HTTPRequestHead`, `HTTPRequest`, `HTTPFailure`, `DeckRoute` |
 | `ResourceLimits.swift` | — | Explicit HTTP/media budgets, message validation, frame handoff, audio accounting | `HTTPConnectionBudget`, `MediaSessionBudget`, `PhoneMediaMessage`, `LatestFrameHandoff`, `AudioQueueBudget` |
-| `ActionRegistry.swift` | — | Approved-action boundary: identifier syntax, server-authored metadata, typed parameters, authorization, controlled execution, `POST /launch` adapter | `ActionID`, `ActionKind`, `ActionDescriptor`, `ActionParameters`, `AppLaunchParameters`, `ActionOutcome`, `ActionRegistry`, `AppLaunchExecutor`, `AppLaunchAdapter` |
+| `ActionRegistry.swift` | — | Approved-action boundary: identifier syntax, server-authored metadata, typed parameters, authorization, controlled execution, shared `POST /launch` handler | `ActionID`, `ActionKind`, `ActionDescriptor`, `ActionParameters`, `AppLaunchParameters`, `ActionOutcome`, `ActionRegistry`, `AppLaunchExecutor`, `AppLaunchAdapter`, `AppLaunchRoute` |
 | `Tests/oldphonedeckTests/` | — | Swift Testing parser/resource, action-boundary and HTTP/WS/WSS/TLS socket tests; no app startup | Parsing, lifecycle, budget, handoff, audio, action and launch-route tests |
 | `TLS.swift` | — | Private CA, server cert, PKCS#12 identity, TLS/WS parameters | `LocalTLS.identity/makeCA/makeServerCert/loadIdentity/parameters` |
 | `PhoneMedia.swift` | — | Bounded WSS ingest/lifecycle, latest-frame cache, audio playback | `PhoneMediaServer`, `MediaWebSocketConnection`, `AudioOut` |
@@ -195,16 +195,20 @@ hand-off to `Apps.launch` that the route used before M2.3. Authorization therefo
 inside the boundary rather than in the route, so a caller that reaches the registry by any
 route is still authorized. The catalog resolver and the execution callback are injected,
 which is what makes the boundary testable without NSWorkspace. `POST /launch` is a thin
-adapter: the server names `app.launch`, the client supplies only data, and every rejection
-keeps the historical `404 unknown app`. `ok` still means accepted and dispatched, not
-activated. Only `app.launch` is registered; every other route remains legacy.
+adapter, and the adapter is one shared handler — `AppLaunchRoute.handle` — called
+identically by the production route switch and by the integration tests, so the tests cannot
+pass against wiring production does not use. It re-runs the M2.1 parameter check, asks the
+registry, and maps the outcome onto the historical response shape: the server names
+`app.launch`, the client supplies only data, and every rejection keeps the historical
+`404 unknown app`. `ok` still means accepted and dispatched, not activated. Only
+`app.launch` is registered; every other route remains legacy.
 
 **Traces.**
 
-- *Launch an app*: `POST /launch?k=…` `path=<app>` → M2.1 admission →
-  `DeckRoute.validateParameters` → `AppLaunchAdapter` → `ActionRegistry.dispatch(app.launch,
-  appPath)` → parameter check → `Apps.isKnown` → `AppLaunchExecutor.schedule` → main queue →
-  `NSWorkspace.openApplication` → `ok`.
+- *Launch an app*: `POST /launch?k=…` `path=<app>` → M2.1 admission → `DeckRoute.match` →
+  `AppLaunchRoute.handle` (`DeckRoute.validateParameters` → `AppLaunchAdapter` →
+  `ActionRegistry.dispatch(app.launch, appPath)` → parameter check → `Apps.isKnown`) →
+  `AppLaunchExecutor.schedule` → main queue → `NSWorkspace.openApplication` → `ok`.
 - *Take note*: `POST /claude?k=…` `text=…&send=1` → dispatch to main → `claude://` deep
   link → after 2.0 s, if Claude is frontmost, `CGEvent` Return → `ok` returned immediately.
 - *Dashboard*: `GET /stats` every 2 s → `Stats.snapshot()` (blocking `queue.sync`) merged
@@ -354,7 +358,8 @@ MEDIUM
 | Configuration is a bare `[String]` with no version; unparseable and absent are indistinguishable | `Launcher.selected()` |
 | Frontend geometry and `APP_SLOTS` are hardcoded | `index.html` `layout`, `renderKeys` |
 | One serial queue serves both listeners; full app-directory rescan per icon/launch request | `HTTPServer.queue`, `Apps.list()` |
-| Focused M2.1/M2.2 Swift Testing coverage only; hardware playback and broader regression/CI coverage remain absent | `Tests/oldphonedeckTests`, repository |
+| Action authorization compares exact catalog path **strings** and pins no filesystem object. Catalog entries may be symlinks, and the target could change before the asynchronous launch (TOCTOU). Inherited unchanged from the pre-M2.3 route; no HTTP-only exploit identified. Resolution or acceptance is **M5** — see the M2.3 implementation note in `docs/DECISIONS.md`. | `Apps.list/isKnown/launch`, `ActionRegistry.dispatch` |
+| Focused M2.1–M2.3 Swift Testing coverage only; hardware playback and broader regression/CI coverage remain absent | `Tests/oldphonedeckTests`, repository |
 | Accessibility key press is time-based (fixed 2 s delay + frontmost check) | `Claude.ask` |
 | TLS identity is re-issued only at startup, so an IP change degrades to HTTP-only | `LocalTLS.identity` |
 

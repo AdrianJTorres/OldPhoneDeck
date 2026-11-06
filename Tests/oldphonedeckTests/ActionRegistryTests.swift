@@ -235,18 +235,26 @@ struct ActionAuthorizationTests {
         #expect(recorder.paths == [approved])
     }
 
-    @Test func productionWiringFailsClosed() throws {
-        // The default initializer wires the real catalog (`Apps.isKnown`) and the real
-        // main-queue executor. Every path below is one that cannot be an application bundle,
-        // so this test cannot open an application even if a gate inside the boundary
-        // regressed — a regression has to fail an expectation, not launch something.
-        let registry = ActionRegistry()
-        for path in ["", "/bin/sh", "/etc/hosts", "/etc/passwd", "/Applications/Safari.app ", "app.launch"] {
+    @Test func productionCatalogPolicyFailsClosed() throws {
+        // The real production authorization policy — `Apps.isKnown`, which rescans the Mac's
+        // own application directories — behind a recording executor.
+        //
+        // No test may construct `ActionRegistry()`: that initializer retains the real
+        // `Apps.launch`, so a regressed or mutated authorization gate would carry a path
+        // straight to NSWorkspace. Injecting the executor means a regression can only fail an
+        // expectation here, never open an application. The two production ingredients are
+        // pinned separately instead: this test for the catalog policy, and
+        // `productionExecutorKeepsAsynchronousMainQueueDispatch` for the executor's dispatch.
+        let recorder = LaunchRecorder()
+        let registry = ActionRegistry(approvedAppPath: Apps.isKnown, launchApp: recorder.launch)
+        for path in ["", "/bin/sh", "/etc/hosts", "/etc/passwd", "/Applications", "/Applications/Safari.app ",
+                     "/tmp/evil.app", "app.launch"] {
             #expect(registry.dispatch(.appLaunch, parameters: .appPath(path)) != .dispatched)
         }
         // An unregistered identifier must not resolve to the registered action.
         let unregistered = try #require(ActionID(rawValue: "app.quit"))
         #expect(registry.dispatch(unregistered, parameters: .appPath("/bin/sh")) == .unknownAction)
+        #expect(recorder.count == 0)
         #expect(registry.descriptor(for: .appLaunch) != nil)
     }
 }

@@ -155,11 +155,9 @@ let routes: (HTTPRequest, HTTPConnection) -> Void = { req, conn in
             server.queue.async { conn.respond(200, "image/png", png) }
         }
     case .launch:
-        // Thin adapter: the registry authorizes against the Mac's own catalog and dispatches.
-        if let failure = AppLaunchAdapter.handle(p, registry: actions) {
-            return conn.respond(failure.status, text: failure.message)
-        }
-        conn.respond(text: "ok")
+        // The same shared handler the integration tests exercise: it re-runs the M2.1
+        // parameter check, then lets the registry authorize and dispatch.
+        AppLaunchRoute.handle(req, registry: actions, on: conn)
     case .claude:
         let text = (p["text"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         DispatchQueue.main.async {

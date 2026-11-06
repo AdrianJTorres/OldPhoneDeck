@@ -4,10 +4,10 @@ import Testing
 @testable import oldphonedeck
 
 /// Loopback HTTP only: no application startup, no real token, no launcher configuration and
-/// no NSWorkspace. The routes closure is the production dispatch order for the one migrated
-/// route — `DeckRoute.match` → `DeckRoute.validateParameters` → `AppLaunchAdapter` — with the
-/// rest of the route table standing in as `404`, so `POST /launch` is exercised end to end
-/// while the registry is wired to test doubles.
+/// no NSWorkspace. Every request below is answered by `AppLaunchRoute.handle` — the same
+/// shared handler `main.swift` calls — behind production `DeckRoute.admit` and
+/// `DeckRoute.match`; only the rest of the route table is stubbed as `404`. The registry is
+/// wired to test doubles, so nothing here can open an application.
 @Suite(.serialized)
 struct AppLaunchRouteTests {
     private let token = "action-boundary-test"
@@ -21,13 +21,7 @@ struct AppLaunchRouteTests {
             guard let route = DeckRoute.match(method: req.method, path: req.path), route == .launch else {
                 return conn.respond(404, text: "not found")
             }
-            if let failure = DeckRoute.validateParameters(req) {
-                return conn.respond(failure.status, text: failure.message)
-            }
-            if let failure = AppLaunchAdapter.handle(req.params, registry: registry) {
-                return conn.respond(failure.status, text: failure.message)
-            }
-            conn.respond(text: "ok")
+            AppLaunchRoute.handle(req, registry: registry, on: conn)
         }
         try #require(resourceEventually { (server.port?.rawValue ?? 0) > 0 })
         return (server, try #require(server.port))
@@ -157,5 +151,45 @@ struct AppLaunchRouteTests {
                              body: "action=app.launch&path=" + formEncode(FakeAppCatalog.approved[0]))
         #expect(clean.hasPrefix("HTTP/1.1 200 OK\r\n"))
         #expect(recorder.paths == [FakeAppCatalog.approved[0]])
+    }
+
+    @Test func sharedHandlerIsSelfSufficientWithoutTheRouteSwitch() throws {
+        // Regression test for the extracted handler: this server calls `AppLaunchRoute.handle`
+        // with no `DeckRoute.match` and no `DeckRoute.validateParameters` pass in front of it,
+        // which is what a future caller might do. Parameter validation, registry authorization
+        // and the historical response shape still hold, because the handler owns them.
+        let recorder = LaunchRecorder()
+        let server = try HTTPServer(port: 0, queue: DispatchQueue(label: "shared-handler-test"),
+                                    budget: HTTPConnectionBudget())
+        let registry = testRegistry(recorder: recorder)
+        server.start(admission: { DeckRoute.admit($0, token: self.token) }) { req, conn in
+            AppLaunchRoute.handle(req, registry: registry, on: conn)
+        }
+        defer { server.stop() }
+        try #require(resourceEventually { (server.port?.rawValue ?? 0) > 0 })
+        let port = try #require(server.port)
+
+        let overlong = try post(port: port, target: "/launch?k=\(token)",
+                                body: "path=" + String(repeating: "a", count: 4097))
+        #expect(overlong.hasPrefix("HTTP/1.1 413 Content Too Large\r\n"))
+        #expect(overlong.hasSuffix("\r\n\r\napp path too long"))
+        #expect(recorder.count == 0)
+
+        let rejected = try post(port: port, target: "/launch?k=\(token)", body: "path=" + formEncode("/tmp/evil.app"))
+        #expect(rejected.hasPrefix("HTTP/1.1 404 Not Found\r\n"))
+        #expect(rejected.hasSuffix("\r\n\r\nunknown app"))
+        #expect(recorder.count == 0)
+
+        let accepted = try post(port: port, target: "/launch?k=\(token)",
+                                body: "path=" + formEncode(FakeAppCatalog.approved[0]))
+        #expect(accepted.hasPrefix("HTTP/1.1 200 OK\r\n"))
+        #expect(accepted.hasSuffix("\r\n\r\nok"))
+        #expect(recorder.paths == [FakeAppCatalog.approved[0]])
+
+        // Admission stays the transport's job and still runs in front of the shared handler.
+        let unauthenticated = try post(port: port, target: "/launch",
+                                       body: "path=" + formEncode(FakeAppCatalog.approved[0]))
+        #expect(unauthenticated.hasPrefix("HTTP/1.1 403 Forbidden\r\n"))
+        #expect(recorder.count == 1)
     }
 }

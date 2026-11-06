@@ -74,8 +74,8 @@ configuration, keychain certificates or audio hardware are touched. Tests do not
 the full app.
 
 M2.3 — App Action Boundary: **IN PROGRESS** — implemented on `m2.3/app-action-boundary`
-(`8097c28` implementation, `009e02d` test hardening), **pending independent review and
-Steering acceptance**. Adds `Sources/oldphonedeck/ActionRegistry.swift`: a typed,
+(`8097c28` implementation, `009e02d` test hardening, `d83ae49` documentation, plus a
+review-findings closure commit). Adds `Sources/oldphonedeck/ActionRegistry.swift`: a typed,
 server-authoritative action boundary with a validated identifier, server-authored display
 metadata, typed parameters, authorization inside the boundary and a controlled executor.
 `app.launch` is the only registered action and unknown or malformed identifiers fail closed.
@@ -85,17 +85,28 @@ meaning accepted-and-dispatched rather than activated. No new endpoint, no persi
 configuration schema, no token scope, no plugin loader and no UI change; `/media`,
 `/claude`, `/speedtest`, `/launcher` and `/icon` remain legacy and are not migrated.
 
-Validation: all **89 Swift Testing tests** pass (the 63 retained M2.1/M2.2 tests plus 26
+Independent Codex review: **PASS WITH MINOR FINDINGS** — zero blockers, zero major, three
+minor. All three are closed on the branch: `POST /launch` wiring was extracted into one
+shared handler (`AppLaunchRoute.handle`) that production and the integration tests call
+identically; the last test that held the real `Apps.launch` executor now injects a recording
+callback, so no automated test can reach NSWorkspace even under an authorization regression;
+and the inherited filesystem trust limits (exact path-string matching, symlinked catalog
+entries, no object pinning, a TOCTOU window before the asynchronous launch) are recorded as
+residual **M5** risk. M2.3 is still **not accepted** — Steering acceptance, and any re-review
+the reviewer requires, remain outstanding.
+
+Validation: all **90 Swift Testing tests** pass (the 63 retained M2.1/M2.2 tests plus 27
 new ones, four of them parameterized into 44 cases), covering action identity, parameters,
 authorization, execution and `POST /launch` HTTP compatibility against a real loopback
-listener. Tests inject a fake app catalog and a recording executor, so they never call
-NSWorkspace or open an application. `swift build -c release` passes with no new warnings.
-The release binary was exercised on isolated ports (8065/8067/8068) with rejection paths
-only, so nothing launched, the two running personal instances were untouched and the real
-configuration was not written. Four gate mutations — removing the catalog authorization,
-removing parameter validation, removing the main-queue dispatch, and letting unknown
-identifiers fall back to the registered action — were each observed to fail the relevant
-tests and were reverted. No physical iPhone acceptance is claimed for this slice.
+listener through the shared production handler. Tests inject a fake app catalog and a
+recording executor, so they never call NSWorkspace or open an application.
+`swift build -c release` passes with no new warnings. The release binary was exercised on
+isolated ports (8065/8067/8068) with rejection paths only, so nothing launched, the two
+running personal instances were untouched and the real configuration was not written. Gate
+mutations — removing the catalog authorization, removing parameter validation, removing both
+together, removing the main-queue dispatch, and letting unknown identifiers fall back to the
+registered action — were each observed to fail the relevant tests and were reverted. No
+physical iPhone acceptance is claimed for this slice.
 
 M2.4 — Configuration V1 codec: **NOT STARTED** and not mandated by M2.3. It is the next
 candidate slice under ADR-007 and begins only on an explicit Steering brief.
