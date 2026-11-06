@@ -303,6 +303,12 @@ struct ConfigurationJSONScanner {
         defer { depth -= 1 }
         index += 1
         var members: [(String, ConfigurationJSONValue)] = []
+        // Names seen in *this* object only. Uniqueness is a property of one object, so a
+        // scanner-wide set would falsely reject the same name in two sibling objects — every
+        // control repeats `id`, `action` and `parameters`. A set rather than a scan over
+        // `members` because the scanner sees every name before any schema rule bounds how many
+        // there are, and a linear search per name made a wide object quadratic.
+        var names = Set<String>()
         skipWhitespace()
         if current() == 0x7D { index += 1; return .object(members) }               // }
         while true {
@@ -310,7 +316,7 @@ struct ConfigurationJSONScanner {
             skipWhitespace()
             guard current() == 0x22 else { throw ScanError.syntax }
             let name = try scanString()
-            guard members.allSatisfy({ $0.0 != name }) else { throw ScanError.duplicateKey }
+            guard names.insert(name).inserted else { throw ScanError.duplicateKey }
             skipWhitespace()
             guard current() == 0x3A else { throw ScanError.syntax }                // :
             index += 1

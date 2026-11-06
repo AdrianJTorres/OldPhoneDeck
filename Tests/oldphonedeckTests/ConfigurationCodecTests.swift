@@ -1012,6 +1012,75 @@ struct StrictJSONSyntaxTests {
                 "Duplicated array elements are data, not ambiguous names")
     }
 
+    /// Names are compared *after* escapes are decoded, so two spellings of one name are one name.
+    /// A reader that compared raw bytes would see `\u0061` and `a` as distinct and keep whichever
+    /// came last, which is the ambiguity the duplicate rule exists to remove.
+    @Test func anEscapedEquivalentNameIsStillADuplicate() {
+        #expect(decode(#"{"\u0061":1,"a":2}"#) == .malformed(.duplicateKey))
+        #expect(decode(#"{"\u0041\u0042":"x","AB":"y"}"#) == .malformed(.duplicateKey))
+        #expect(decode(#"{"a\u0062":1,"ab":2}"#) == .malformed(.duplicateKey))
+        // The same holds in a nested object, and for a name escaped two different ways.
+        #expect(decode(#"{"version":1,"controls":[{"id":"a","action":"app.quit","parameters":{"\u006b":1,"k":2}}]}"#)
+                == .malformed(.duplicateKey))
+        #expect(decode(#"{"\u0061":1,"\u0061":2}"#) == .malformed(.duplicateKey))
+        // A near miss is not a duplicate: `\u0061b` is "ab", which differs from "a".
+        #expect(decode(#"{"\u0061":1,"ab":2}"#) != .malformed(.duplicateKey))
+    }
+
+    /// Uniqueness is a property of one object, not of the document. The name set has to be local to
+    /// each object, or the ordinary case — every control repeating `id`, `action` and `parameters`
+    /// — would be rejected as ambiguous.
+    @Test func theSameNameInSiblingObjectsIsNotADuplicate() {
+        let twoControls = document(
+            control(id: "a", action: "app.quit", parameters: "{\"k\":\"v\"}") + ","
+            + control(id: "b", action: "app.quit", parameters: "{\"k\":\"w\"}"))
+        guard case .v1(let configuration) = decode(twoControls) else {
+            Issue.record("Expected sibling objects to decode, got \(decode(twoControls))")
+            return
+        }
+        #expect(configuration.controls.count == 2)
+        #expect(configuration.controls[0].parameters == .unmodeled(["k": "v"]))
+        #expect(configuration.controls[1].parameters == .unmodeled(["k": "w"]))
+
+        // Unknown keys, so the document is rejected — but for that reason, and not as a duplicate.
+        // Both carry a version, because the version is identified before any unknown-key check.
+        #expect(decode(#"{"version":1,"a":{"k":1},"b":{"k":2}}"#) == .malformed(.unknownKey))
+        #expect(decode(#"{"version":1,"controls":[{"k":1},{"k":2}]}"#) == .malformed(.unknownKey))
+        // Without a version the diagnosis is the missing version, and still not a duplicate name.
+        #expect(decode(#"{"a":{"k":1},"b":{"k":2}}"#) == .malformed(.missingVersion))
+    }
+
+    @Test func aDuplicateNameIsRejectedHoweverDeeplyItIsNested() {
+        // The scanner sees every name before any schema rule does, so a duplicate buried where no
+        // V1 value could live is still ambiguity rather than an unknown-key or type complaint.
+        #expect(decode(#"{"version":1,"controls":[{"id":"a","action":"app.quit","parameters":{"deep":{"x":1,"x":2}}}]}"#)
+                == .malformed(.duplicateKey))
+        #expect(decode(#"{"a":{"b":{"c":{"d":1,"d":2}}}}"#) == .malformed(.duplicateKey))
+        #expect(decode(#"[[[[{"z":1,"z":2}]]]]"#) == .malformed(.duplicateKey))
+        #expect(decode(#"{"version":1,"controls":[{"id":"a","action":"app.quit","parameters":{"a":[[{"q":1,"q":2}]]}}]}"#)
+                == .malformed(.duplicateKey))
+    }
+
+    /// The scanner runs before any schema bound, so the number of names in one object is limited
+    /// only by the document cap. Duplicate detection is a set lookup per name; when it was a linear
+    /// scan over the names already seen, a wide object cost O(n²) comparisons on the read path.
+    /// Correctness is asserted rather than elapsed time, which varies with the machine and load.
+    @Test func aWideObjectIsRejectedByTheSchemaAndNotByExhaustion() {
+        let count = 90_000
+        let members = (0..<count).map { "\"k\($0)\":1" }.joined(separator: ",")
+        let json = "{\"version\":1,\"controls\":[{\(members)}]}"
+        let bytes = Data(json.utf8)
+        // Asserted so the test cannot pass by overrunning the cap and being rejected for size
+        // instead of for the unknown key, which would leave the wide scan unexercised.
+        #expect(bytes.count <= ConfigurationDecoder.maximumDocumentBytes)
+        #expect(decode(json) == .malformed(.unknownKey))
+
+        // The same width at the document root, where the missing version is what fires.
+        #expect(decode("{\(members)}") == .malformed(.missingVersion))
+        // A repeated name is caught on its second occurrence, so width never has to be scanned.
+        #expect(decode(#"{"version":1,"controls":[{"same":1,"same":1}]}"#) == .malformed(.duplicateKey))
+    }
+
     /// Number syntax the grammar pins down. Each of these is a token a hand-edited file could
     /// contain, and each is corruption rather than a value.
     @Test(arguments: [#"{"version":01,"controls":[]}"#, #"{"version":+1,"controls":[]}"#,

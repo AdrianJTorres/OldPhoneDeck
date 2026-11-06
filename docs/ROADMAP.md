@@ -159,14 +159,17 @@ remains **open** and closes only when M2.5 wires the codec into the read path. M
 IN PROGRESS until the corrected codec passes independent re-review and Steering acceptance;
 M2.5 (storage integration, read-path migration and any cutover) has not been briefed.
 
-Validation so far: all **237 Swift Testing tests** pass (the 90 retained M2.1–M2.3 tests plus
-147 new ones across 17 new suites, many parameterized), covering input states, legacy decode,
+Validation so far: all **241 Swift Testing tests** pass (the 90 retained M2.1–M2.3 tests plus
+151 new ones across 17 new suites, many parameterized), covering input states, legacy decode,
 V1 decode, version precedence, document strictness and both caps, control identity, configured
 actions, parameters, presentation, encoder strictness, round trips, migration, reverse
 conversion, security invariants, strict JSON syntax, exact version parsing and the canonical
-size invariant. Codec tests open no file and need no home-directory isolation; the
-action-boundary checks reuse the injecting `testRegistry` helper, so no test constructs the
-production `ActionRegistry()`. `swift build -c release` passes with no warnings.
+size invariant. Duplicate names are detected with a set local to each object, so a wide object
+costs a lookup per name rather than a scan of the names already seen; the scanner runs before any
+schema bound, so that path is limited only by the document cap. Codec tests open no file and need
+no home-directory isolation; the action-boundary checks reuse the injecting `testRegistry`
+helper, so no test constructs the production `ActionRegistry()`. `swift build -c release` passes
+with no warnings.
 Fourteen mutations — hoisting the unknown-key check above the version check, dropping empty
 legacy entries during migration, making `legacySelection` skip unrepresentable controls,
 collapsing `.unreadable` into `.absent`, removing the encoder's round-trip verification, making
