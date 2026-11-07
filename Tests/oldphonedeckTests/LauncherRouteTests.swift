@@ -5,6 +5,54 @@ import Testing
 
 // MARK: - parseSelection
 
+@Suite struct LauncherRouteParameterValidationTests {
+    private func request(_ params: [String: String], method: String = "POST",
+                         path: String = "/launcher") -> HTTPRequest {
+        HTTPRequest(method: method, path: path, query: params, headers: [:], body: Data())
+    }
+
+    @Test func sharedValidatorRejectsNoncanonicalOrOutOfRangeCounts() {
+        for count in ["", "-1", "+1", "01", "8", "1.0", " 1", "１", String(repeating: "9", count: 100)] {
+            #expect(DeckRoute.validateParameters(request(["n": count]))
+                    == HTTPFailure(status: 400, message: "invalid-count"))
+        }
+    }
+
+    @Test func sharedValidatorRejectsDisagreementWithoutPaddingOrTruncation() {
+        for params in [["n": "0", "paths": "a"], ["n": "1", "paths": "a\nb"],
+                       ["n": "2", "paths": "a"]] {
+            #expect(DeckRoute.validateParameters(request(params))
+                    == HTTPFailure(status: 400, message: "count-mismatch"))
+        }
+    }
+
+    @Test func sharedValidatorUsesUTF8EntryBoundaries() {
+        let path = String(repeating: "é", count: 2048)
+        #expect(DeckRoute.validateParameters(request(["n": "1", "paths": path])) == nil)
+        #expect(DeckRoute.validateParameters(request(["n": "1", "paths": path + "x"]))
+                == HTTPFailure(status: 400, message: "entry-too-long"))
+    }
+
+    @Test func sharedValidatorPreservesEmptyAndLegacySelections() {
+        for params in [[String: String](), ["paths": "a\n\nb"], ["n": "0"],
+                       ["n": "1", "paths": ""], ["n": "2", "paths": "\n"]] {
+            #expect(DeckRoute.validateParameters(request(params)) == nil)
+        }
+    }
+
+    @Test func revisionRefusalsRemainTheStoresResponsibility() {
+        #expect(DeckRoute.validateParameters(request(["n": "0"])) == nil)
+        for expected in ["", "stale", "anything"] {
+            #expect(DeckRoute.validateParameters(request(["n": "0", "expected": expected])) == nil)
+        }
+    }
+
+    @Test func launcherSyntaxRulesApplyOnlyToLauncherPost() {
+        #expect(DeckRoute.validateParameters(request(["n": "8"], method: "GET")) == nil)
+        #expect(DeckRoute.validateParameters(request(["n": "8"], path: "/launch")) == nil)
+    }
+}
+
 @Suite struct LauncherRouteParseSelectionTests {
     @Test func legacyBranchSplitsOnNewlineOmittingEmpty() throws {
         // No `n` parameter: pre-M2.5 client behavior, unchanged from main.swift:147.
@@ -177,6 +225,98 @@ struct LauncherRouteStoreWiringTests {
         var body = "n=\(paths.count)&paths=\(paths.joined(separator: "\n"))"
         if let expected { body += "&expected=\(expected)" }
         return body
+    }
+
+    private func deliver(_ response: String, to client: LauncherClientHarness) throws {
+        let separator = try #require(response.range(of: "\r\n\r\n"))
+        let statusText = try #require(response.split(separator: " ").dropFirst().first)
+        let status = try #require(Int(statusText))
+        try client.reply(String(response[separator.upperBound...]), status: status)
+    }
+
+    @Test func shippedClientEditsTwiceThroughTheStoreWithoutAnInterveningGet() throws {
+        let directory = try temporaryStoreDirectory()
+        defer { removeStoreDirectory(directory) }
+        try seedLegacy(directory, ["/Applications/Safari.app"])
+        let (server, port) = try startServer(store: ConfigurationStore(directory: directory),
+                                             catalog: { self.catalog })
+        defer { server.stop() }
+        let client = try LauncherClientHarness(token: token)
+        try client.run("loadKeys()")
+        try deliver(get(port: port, target: client.run("requests[0].path").toString()), to: client)
+
+        // Exercise the actual editor selection handler, not just a manufactured draft.
+        try client.run("openEditor(); $('editList').children[1].listeners.click(); $('editSave').tap()")
+        let body = try #require(try client.run("requests[0].body").toString())
+        #expect(HTTPRequest.parseForm(body)["n"] == "2")
+        #expect(HTTPRequest.parseForm(body)["expected"]?.isEmpty == false)
+        let saved = try post(port: port, target: client.run("requests[0].path").toString(), body: body)
+        #expect(saved.hasPrefix("HTTP/1.1 200 OK\r\n"))
+        try deliver(saved, to: client)
+        #expect(try client.run("launcher.all.length").toInt32() == 2)
+        #expect(try client.run("$('keys').children[1].lastChild.textContent").toString() == "Xcode")
+        let revision = try client.run("cfg.revision").toString()
+
+        // Preserve form delimiters, Unicode, empty entries and duplicates end to end.
+        let paths = ["/Applications/A+B & 你好.app", "", "/Applications/A+B & 你好.app"]
+        let encoded = String(decoding: try JSONSerialization.data(withJSONObject: paths), as: UTF8.self)
+        try client.run("openEditor(); draft = \(encoded); $('editSave').tap()")
+        let secondBody = try #require(try client.run("requests[0].body").toString())
+        #expect(HTTPRequest.parseForm(secondBody)["expected"] == revision)
+        let second = try post(port: port, body: secondBody)
+        #expect(second.hasPrefix("HTTP/1.1 200 OK\r\n"))
+        try deliver(second, to: client)
+        #expect(try client.run("launcher.selected").toArray() as? [String] == paths)
+        #expect(try client.run("cfg.revision").toString() != revision)
+        #expect(try client.run("notices[notices.length - 1]").toString() == "Keys saved")
+        #expect(ConfigurationStore(directory: directory).load().selected == paths)
+    }
+
+    @Test func shippedClientRetainsItsEditWhenAnotherWriterMakesItsRevisionStale() throws {
+        let directory = try temporaryStoreDirectory()
+        defer { removeStoreDirectory(directory) }
+        let store = ConfigurationStore(directory: directory)
+        let (server, port) = try startServer(store: store)
+        defer { server.stop() }
+        let client = try LauncherClientHarness(token: token)
+        try client.run("loadKeys()")
+        try deliver(get(port: port), to: client)
+        let originalRevision = try client.run("cfg.revision").toString()
+        guard case .saved = store.write(paths: ["/Other.app"], expectedRevision: originalRevision) else {
+            Issue.record("Fixture write failed")
+            return
+        }
+        let original = readBytes(at: store.configurationPath)
+        try client.run("openEditor(); draft = ['/Draft.app']; $('editSave').tap()")
+        let body = try #require(try client.run("requests[0].body").toString())
+        let response = try post(port: port, body: body)
+        #expect(response.hasPrefix("HTTP/1.1 409 Conflict\r\n"))
+        try deliver(response, to: client)
+        #expect(try client.run("cfg.revision").toString() == originalRevision)
+        #expect(try client.run("draft[0]").toString() == "/Draft.app")
+        #expect(try client.run("notices[notices.length - 1]").toString().contains("reload"))
+        #expect(readBytes(at: store.configurationPath) == original)
+    }
+
+    @Test func shippedClientCannotPostATruncatedReadOnlySelection() throws {
+        let directory = try temporaryStoreDirectory()
+        defer { removeStoreDirectory(directory) }
+        let paths = (1...8).map { "/App\($0).app" }
+        let legacy = try seedLegacy(directory, paths)
+        let store = ConfigurationStore(directory: directory)
+        let (server, port) = try startServer(store: store)
+        defer { server.stop() }
+        let client = try LauncherClientHarness(token: token)
+        try client.run("loadKeys()")
+        try deliver(get(port: port), to: client)
+        let original = readBytes(at: store.configurationPath)
+        #expect(try client.run("launcher.selected").toArray() as? [String] == paths)
+        try client.run("openEditor(); $('editSave').tap()")
+        #expect(try client.run("requests.length").toInt32() == 0)
+        #expect(try client.run("cfg.writable").toBool() == false)
+        #expect(try client.run("$('cfgWarn').textContent").toString().contains("7 keys"))
+        #expect(readBytes(at: store.configurationPath) == original)
+        #expect(readBytes(at: store.legacyPath) == legacy)
     }
 
     // MARK: T-A — GET → edit → POST → render → edit again

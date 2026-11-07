@@ -21,6 +21,15 @@ enum LauncherRoute {
         case invalidCount
         case countMismatch
         case entryTooLong
+
+        var failure: HTTPFailure? {
+            switch self {
+            case .success: return nil
+            case .invalidCount: return HTTPFailure(status: 400, message: "invalid-count")
+            case .countMismatch: return HTTPFailure(status: 400, message: "count-mismatch")
+            case .entryTooLong: return HTTPFailure(status: 400, message: "entry-too-long")
+            }
+        }
     }
 
     /// Parses `n` and `paths` into a selection array, following the M2.5 wire contract (§4.2).
@@ -131,12 +140,10 @@ enum LauncherRoute {
                     let refusal = Self.refusal(failure.rejection)
                     connection.respond(refusal.status, text: refusal.token)
                 }
-            case .invalidCount:
-                connection.respond(400, text: "invalid-count")
-            case .countMismatch:
-                connection.respond(400, text: "count-mismatch")
-            case .entryTooLong:
-                connection.respond(400, text: "entry-too-long")
+            case let rejected:
+                if let failure = rejected.failure {
+                    connection.respond(failure.status, text: failure.message)
+                }
             }
 
         default:

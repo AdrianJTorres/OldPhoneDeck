@@ -279,15 +279,28 @@ M2.5 — Storage Integration & Migration Cutover: **IN PROGRESS**. Design approv
 recorded as **ADR-016** (accepted 2026-11-07), which elaborates ADR-007 and ADR-015 without
 superseding either. The consolidated design is `docs/M2.5-DESIGN.md`; the drafting record is
 `docs/M2.5-ADR-016-DRAFT.md`. The milestone is split into slices S1, S1b, S2–S7 (§13 of the design);
-**S1, S1b and S2 are implemented and ACCEPTED by Steering (2026-11-07)** on
+**S1, S1b, S2 and S3 are implemented and ACCEPTED by Steering (2026-11-07)** on
 `m2.5/s1-configuration-store`, S2 including its security correction (0700 for newly created
 configuration directories, flag-like `--config-dir` values rejected). **S3 — the runtime wiring of
 `GET`/`POST /launcher` to `ConfigurationStore`, retiring `Launcher.selected()`/`Launcher.save()`
-and the `Apps.isKnown` save filter, and adding `409` to the reason map — is implemented** on the
-same branch, pending independent Codex review and Steering acceptance. S4 through S7 are **NOT
-STARTED**: the shipped ES5 page does not yet send `n`/`expected` (that is S4), so between S3 and
-S4 a save from the bundled page fails closed with `400 missing-revision` while reads are
-unchanged — the disclosed §5.2 refusal, not a loss. No production cutover has occurred.
+and the `Apps.isKnown` save filter, and adding `409` to the reason map — is accepted** after the
+independent review (373/373 tests, no blockers). **S4 is implemented by Codex**, reassigned as
+the sole WRITE_OWNER by Steering: the ES5 page consumes the full GET/POST shape, sends
+`n`/`paths`/`expected`, refreshes its revision after a save, and blocks saves in read-only states
+with a visible warning. Stale, busy, unreachable and failed-write responses retain the edit and
+show an explanation. The accepted S3 minor is also closed: `DeckRoute.validateParameters` reuses
+the pure selection parser; missing-revision and state refusals stay in the store in their existing
+order. S4 awaits Steering acceptance and **physical iPhone 11 validation in both orientations**;
+no device PASS is claimed. S5 through S7 are **NOT STARTED**, including the broader documentation
+refresh and isolated device acceptance. No production cutover has occurred.
+
+S4 automated evidence: **52/52 focused tests** in four suites and **388/388 full-suite tests** in
+41 suites pass with the documented CLT Testing framework. JavaScriptCore executes the shipped
+keys/editor code, including a real loopback GET → edit → POST → edit → POST against a temporary
+store, stale-write feedback and an over-limit save guard. The entire inline script parses as
+ECMAScript 5; the layout, tap, key-rendering and editor-interaction functions match S3. A clean
+release build passes with zero warnings. Tests deny access to the real configuration directory;
+no production server was started or stopped. These checks do not replace physical iPhone evidence.
 
 S1 adds `Sources/oldphonedeck/ConfigurationStore.swift`: the storage layer that gives the M2.4 codec
 a file to live in, and the only file this slice adds to `Sources/`. It is **unwired** —

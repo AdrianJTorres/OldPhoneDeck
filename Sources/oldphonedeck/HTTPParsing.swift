@@ -263,6 +263,10 @@ enum DeckRoute: CaseIterable {
 
     static func validateParameters(_ request: HTTPRequest) -> HTTPFailure? {
         let p = request.params
+        if request.method == "POST", request.path == "/launcher" {
+            // Revision and state checks stay under the store's lock, in refusal order.
+            return LauncherRoute.parseSelection(p).failure
+        }
         if request.path == "/launch", (p["path"] ?? "").utf8.count > 4096 {
             return HTTPFailure(status: 413, message: "app path too long")
         }

@@ -68,6 +68,10 @@
   .key.claude svg { position: absolute; left: 17px; top: 17px; }
   .key.claude .label { color: #f2b49c; }
   #hint { position: absolute; top: 290px; font-size: 9.5px; color: #48484a; text-align: center; }
+  #cfgWarn { position: absolute; left: 0; right: 0; bottom: 0; z-index: 9; display: none;
+    background: rgba(120,60,0,.92); color: #ffd9a0; font-size: 10px; line-height: 13px;
+    padding: 4px 8px; text-align: center; white-space: normal; }
+  #editSave[aria-disabled="true"] { opacity: .4; }
 
   /* ---- widgets ---- */
   .card { position: absolute; border-radius: 18px; box-sizing: border-box; padding: 11px 12px; overflow: hidden;
@@ -176,6 +180,7 @@
 <div id="safe"></div>
 <div id="stage">
   <div id="toast"></div>
+  <div id="cfgWarn" role="status"></div>
 
   <!-- The deck: 8 keys + widgets -->
   <div id="deck" class="view on">
@@ -396,6 +401,35 @@
 
   // ---------- keys ----------
   var launcher = { selected: null, all: [] };
+  var cfg = { state: 'unreachable', writable: false, revision: '', text: '' };
+  var CFG_TEXT = {
+    'malformed': 'Config file is damaged. Keys are read-only until it is fixed on the Mac.',
+    'unsupported-version': 'Config file is from a newer PhoneDeck. Update the Mac to change keys.',
+    'unreadable': 'Config file cannot be read. Keys are read-only.',
+    'wrong-format': 'Config file has the wrong shape. Keys are read-only.',
+    'unrepresentable': 'This deck cannot be shown on this page. Keys are read-only.',
+    'too-many-controls': 'This deck has more than 7 keys. Read-only until it is edited on the Mac.',
+    'legacy-readonly': 'Old config cannot be upgraded. Keys are read-only.',
+    'corrupt': 'A failed save damaged the config file. Keys are read-only.',
+    'migrating': 'Another PhoneDeck is upgrading the config. Read-only for now.',
+    'unreachable': 'Cannot read the config from the Mac. Keys are read-only.'
+  };
+  function applyConfig(d) {
+    cfg.state = d.configuration || 'unconfigured';
+    cfg.writable = d.writable !== false;
+    cfg.revision = d.revision || '';
+    cfg.text = cfg.writable ? '' : (CFG_TEXT[cfg.state] || 'Keys are read-only.');
+    var w = $('cfgWarn');
+    w.textContent = cfg.text;
+    w.style.display = cfg.text ? 'block' : 'none';
+    $('editSave').setAttribute('aria-disabled', cfg.writable ? 'false' : 'true');
+  }
+  function readConfig(text) {
+    var d;
+    try { d = JSON.parse(text); } catch (e) { return null; }
+    if (!d || !Array.isArray(d.all) || (d.selected !== null && !Array.isArray(d.selected))) return null;
+    return d;
+  }
   // A notepad with a pencil: quick capture that becomes a Claude conversation.
   var CLAUDE_SVG = '<svg width="36" height="36" viewBox="0 0 36 36">' +
     '<rect x="7" y="5" width="19" height="26" rx="4.5" fill="#fff"/>' +
@@ -407,10 +441,21 @@
   }
   function loadKeys() {
     xhr('GET', url('/launcher'), null, function (s, text) {
-      if (s !== 200) return;
-      launcher = JSON.parse(text);
+      var d = s === 200 ? readConfig(text) : null;
+      if (!d) { applyConfig({ configuration: 'unreachable', writable: false }); return; }
+      launcher = d;
+      applyConfig(d);
       renderKeys();
     });
+  }
+  function saveError(s, body) {
+    var code = (body || '').replace(/^\s+|\s+$/g, '');
+    if (code === 'stale' || code === 'missing-revision') return 'Not saved: reload the deck page, then save again';
+    if (code === 'busy') return 'Not saved: the Mac is busy, try again';
+    if (code === 'too-many-controls') return 'Not saved: this deck has more than 7 keys';
+    if (code === 'write-failed' || code === 'recovery-failed' || code === 'migration-failed') return 'Not saved: the Mac could not write the file';
+    if (s === 0) return 'Not saved: cannot reach the Mac';
+    return s === 409 || s === 400 ? 'Not saved: keys are read-only on the Mac' : 'Save failed';
   }
   function key(cls, label, inner, onTap, onHold) {
     var k = document.createElement('div');
@@ -474,12 +519,23 @@
   $('filter').addEventListener('input', renderEditor);
   tap($('editCancel'), function () { sheet('edit', false); });
   tap($('editSave'), function () {
-    xhr('POST', url('/launcher'), 'paths=' + encodeURIComponent(draft.join('\n')), function (s) {
-      if (s !== 200) return toast('Save failed');
-      launcher.selected = draft.slice();
+    if (!cfg.writable) return toast(cfg.text || 'Keys are read-only');
+    var body = 'n=' + draft.length
+             + '&paths=' + encodeURIComponent(draft.join('\n'))
+             + '&expected=' + encodeURIComponent(cfg.revision);
+    xhr('POST', url('/launcher'), body, function (s, text) {
+      if (s !== 200) return toast(saveError(s, text));
+      var d = readConfig(text);
+      if (!d) {
+        applyConfig({ configuration: 'unreachable', writable: false });
+        return toast('Save response could not be read: reload the deck page');
+      }
+      launcher = d;
+      applyConfig(d);
       renderKeys(); sheet('edit', false); toast('Keys saved');
     });
   });
+  applyConfig({ configuration: 'unreachable', writable: false });
 
   // ---------- Ask Claude ----------
   // Modern iPhone over HTTPS: Safari's speech recognition starts listening right away.
