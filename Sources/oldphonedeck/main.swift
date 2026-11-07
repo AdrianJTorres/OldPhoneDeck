@@ -72,10 +72,10 @@ struct Options {
 setvbuf(stdout, nil, _IOLBF, 0)
 let opts = Options(CommandLine.arguments)
 let configDir = opts.configDir
-// --config-dir redirects the token, the launcher config and the TLS material; the application
+// --config-dir redirects the token, the configuration store and the TLS material; the application
 // catalog (Apps.list) keeps scanning the real application directories.
 LocalTLS.use(configDir: configDir)
-Launcher.use(configDir: configDir)
+let configStore = ConfigurationStore(directory: configDir)
 
 // MARK: Access token (anyone on the Wi-Fi could otherwise open apps on your Mac)
 
@@ -189,7 +189,7 @@ let routes: (HTTPRequest, HTTPConnection) -> Void = { req, conn in
     case .launcherRead, .launcherSave:
         // The same shared handler pattern as AppLaunchRoute: one entry point for GET and POST,
         // validation re-run inside, and no caller can reach the store without the check.
-        LauncherRoute.handle(req, loader: Launcher.selected, saver: Launcher.save, on: conn)
+        LauncherRoute.handle(req, store: configStore, on: conn)
     case .icon:
         let path = p["path"] ?? ""
         guard Apps.isKnown(path) else { return conn.respond(404, text: "unknown app") }

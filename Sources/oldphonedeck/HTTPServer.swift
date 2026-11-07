@@ -96,8 +96,9 @@ final class HTTPConnection {
         deadline?.cancel()
         deadline = nil
         let reason = [200: "OK", 400: "Bad Request", 403: "Forbidden", 404: "Not Found",
-                      405: "Method Not Allowed", 411: "Length Required", 413: "Content Too Large",
-                      414: "URI Too Long", 417: "Expectation Failed", 431: "Request Header Fields Too Large",
+                      405: "Method Not Allowed", 409: "Conflict", 411: "Length Required",
+                      413: "Content Too Large", 414: "URI Too Long", 417: "Expectation Failed",
+                      431: "Request Header Fields Too Large",
                       500: "Internal Server Error", 503: "Service Unavailable"][status] ?? "Error"
         var head = "HTTP/1.1 \(status) \(reason)\r\nContent-Type: \(type)\r\nContent-Length: \(body.count)\r\n"
         head += "Cache-Control: no-store\r\nConnection: close\r\n\r\n"

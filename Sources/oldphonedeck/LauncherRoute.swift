@@ -5,10 +5,15 @@ import Foundation
 /// M2.3: one entry point, validation re-run inside the handler, and no caller can reach the store
 /// without the parameter checks.
 ///
-/// **S1b: unwired to ConfigurationStore.** This slice extracts the handler structure and implements
-/// the `n`/`paths`/`expected` validation, but the actual storage cutover (reading and writing
-/// through `ConfigurationStore`) is S2/S3 work. Until then, the handler delegates to `Launcher`
-/// for reads and writes, preserving the pre-M2.5 response shape.
+/// **S3: wired to `ConfigurationStore`.** GET and a successful POST share one response shape
+/// (M2.5-DESIGN §4.1): `selected`, `all`, `configuration` and `writable` always; `revision` on
+/// every 200 except `migrating`; `version` only for `unsupported-version`; `saved` on POST only.
+/// A refusal is one fixed lowercase token from the §4.3 vocabulary — a state refusal reports the
+/// state, a concurrency refusal reports the concurrency reason — and no token carries document
+/// content. `Launcher.selected()`/`Launcher.save()` are retired and the `Apps.isKnown` save filter
+/// is gone (U3): order, empty entries, duplicates and uninstalled paths are stored exactly as
+/// posted. Authorization for *executing* an app launch is unchanged and lives in `ActionRegistry`;
+/// this route only stores and serves the selection.
 enum LauncherRoute {
     /// The parsed selection from `n`/`paths`, or a refusal token.
     enum SelectionResult: Equatable {
@@ -60,17 +65,47 @@ enum LauncherRoute {
         return .success(elements)
     }
 
+    /// The one serializer for the §4.1 shape. GET and a successful POST both answer through it,
+    /// so a field can never be present in one response and silently missing from the other.
+    static func responseJSON(_ read: ConfigurationRead, catalog: [[String: String]],
+                             saved: Int? = nil) -> [String: Any] {
+        var json: [String: Any] = [
+            "selected": read.selected ?? NSNull(),
+            "all": catalog,
+            "configuration": read.status.rawValue,
+            "writable": read.writable,
+        ]
+        // The single permitted error-payload field (ADR-015): the integer *is* the diagnosis.
+        if let version = read.version { json["version"] = version }
+        // Absent exactly when the store withheld it — a contended migration read must not publish
+        // a token it cannot honour. Never synthesized here.
+        if let revision = read.revision { json["revision"] = revision }
+        if let saved { json["saved"] = saved }
+        return json
+    }
+
+    /// The fixed §4.3 status/token map for a store refusal. `state` carries the store's own
+    /// `configuration` token, so the table stays server-authored and shared with GET.
+    static func refusal(_ rejection: ConfigurationWriteRejection) -> (status: Int, token: String) {
+        switch rejection {
+        case .tooManyKeys: return (400, "too-many-keys")
+        case .entryTooLong: return (400, "entry-too-long")
+        case .missingRevision: return (400, "missing-revision")
+        case .state(let token): return (409, token.rawValue)
+        case .stale: return (409, "stale")
+        case .busy: return (503, "busy")
+        case .writeFailed, .recoveredFromFailedCommit: return (500, "write-failed")
+        case .migrationFailed: return (500, "migration-failed")
+        case .recoveryFailed: return (500, "recovery-failed")
+        }
+    }
+
     /// The production handler for GET and POST `/launcher`. Re-runs `DeckRoute.validateParameters`
-    /// so no caller can reach the store without the check, then delegates to the injected loader
-    /// and saver.
-    ///
-    /// **S1b: the loader and saver are the legacy `Launcher` methods.** The ConfigurationStore
-    /// integration is S2/S3 work. The handler structure is what matters here: one entry point,
-    /// validation inside, and a response shape that includes `selected` and `all`.
+    /// so no caller can reach the store without the check, then reads or writes through the
+    /// injected `ConfigurationStore`.
     static func handle(
         _ request: HTTPRequest,
-        loader: @escaping () -> [String]?,
-        saver: @escaping ([String]) throws -> Int,
+        store: ConfigurationStore,
         on connection: HTTPConnection,
         catalog: @escaping () -> [[String: String]] = Apps.list
     ) {
@@ -79,27 +114,22 @@ enum LauncherRoute {
             return connection.respond(failure.status, text: failure.message)
         }
 
-        let params = request.params
-
         switch request.method {
         case "GET":
-            let selected: Any = loader() ?? NSNull()
-            connection.respondJSON(["selected": selected, "all": catalog()])
+            // 200 in every degraded state (§13): an unreachable configuration is a visible
+            // read-only state, never an empty deck and never an HTTP error.
+            connection.respondJSON(responseJSON(store.load(), catalog: catalog()))
 
         case "POST":
-            // S1b: validate n/paths, but delegate to the legacy saver. The `expected` parameter
-            // is parsed but not yet enforced (that's S2/S3 work with ConfigurationStore).
+            let params = request.params
             switch parseSelection(params) {
             case .success(let paths):
-                do {
-                    let saved = try saver(paths)
-                    // POST returns the same shape as GET, plus `saved`. Until S2/S3, the response
-                    // does not include `configuration`, `writable`, or `revision` (those come from
-                    // ConfigurationStore). The client tolerates their absence.
-                    let selected: Any = loader() ?? NSNull()
-                    connection.respondJSON(["selected": selected, "all": catalog(), "saved": saved])
-                } catch {
-                    connection.respond(500, text: "write-failed")
+                switch store.write(paths: paths, expectedRevision: params["expected"]) {
+                case .saved(let read):
+                    connection.respondJSON(responseJSON(read, catalog: catalog(), saved: paths.count))
+                case .rejected(let failure):
+                    let refusal = Self.refusal(failure.rejection)
+                    connection.respond(refusal.status, text: refusal.token)
                 }
             case .invalidCount:
                 connection.respond(400, text: "invalid-count")

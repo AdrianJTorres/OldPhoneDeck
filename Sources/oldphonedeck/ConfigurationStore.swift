@@ -9,9 +9,11 @@ import Foundation
 /// and consumes its `ConfigurationState`, and adds the two things a codec deliberately cannot know
 /// — which file a document came from, and what the filesystem did.
 ///
-/// **This slice is unwired.** Nothing in `main.swift`, `Control.swift` or the HTTP route table
-/// calls it, so no endpoint behaviour has changed and no real configuration has been read or
-/// written. `Launcher.selected()` and `Launcher.save` remain the runtime path until S3.
+/// **Wired by S3.** `main.swift` constructs the store over its configuration directory (the
+/// `--config-dir` choice from S2) and `LauncherRoute.handle` serves `GET`/`POST /launcher`
+/// exclusively through it; `Launcher.selected()`/`Launcher.save()` and the `Apps.isKnown` save
+/// filter are retired. `config.json` comes into existence through the migration-on-read
+/// (ADR-007); `launcher.json` is never rewritten.
 ///
 /// Three rules from ADR-016 shape everything below:
 ///

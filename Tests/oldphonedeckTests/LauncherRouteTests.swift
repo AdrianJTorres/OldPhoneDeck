@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import Testing
 @testable import oldphonedeck
 
@@ -116,43 +117,21 @@ import Testing
     }
 }
 
-// MARK: - Handler integration
-
-import Network
+// MARK: - Wire integration through the production handler and a real ConfigurationStore
+//
+// M2.5 S3 (design §13, §14): every test runs the shipped `LauncherRoute.handle` behind production
+// `DeckRoute.admit`/`match` over a loopback `HTTPServer(port: 0)`, against a `ConfigurationStore`
+// on a temporary directory (`temporaryStoreDirectory`, the `TLSResourceTests` convention). The
+// catalog is injected, so no test reaches `NSWorkspace`, and no test constructs a production
+// `ActionRegistry()`. No test touches `~/.oldphonedeck`.
 
 @Suite(.serialized)
-struct LauncherRouteHandlerTests {
+struct LauncherRouteStoreWiringTests {
     private let token = "launcher-test-token"
+    private let catalog = [["name": "Safari", "path": "/Applications/Safari.app"],
+                           ["name": "Xcode", "path": "/Applications/Xcode.app"]]
 
-    /// Per-test storage shared by the injected loader and saver, with observable auth side effects.
-    private final class SelectionState {
-        private let lock = NSLock()
-        private var selection: [String]?
-        private var loads = 0
-        private var saves = 0
-
-        init(_ selection: [String]?) { self.selection = selection }
-
-        func load() -> [String]? {
-            lock.lock(); defer { lock.unlock() }
-            loads += 1
-            return selection
-        }
-
-        func save(_ paths: [String]) -> Int {
-            lock.lock(); defer { lock.unlock() }
-            saves += 1
-            selection = paths
-            return paths.count
-        }
-
-        var paths: [String]? { lock.lock(); defer { lock.unlock() }; return selection }
-        var loadCount: Int { lock.lock(); defer { lock.unlock() }; return loads }
-        var saveCount: Int { lock.lock(); defer { lock.unlock() }; return saves }
-    }
-
-    private func startServer(loader: @escaping () -> [String]?,
-                             saver: @escaping ([String]) throws -> Int,
+    private func startServer(store: ConfigurationStore,
                              catalog: @escaping () -> [[String: String]] = { [] }) throws -> (HTTPServer, NWEndpoint.Port) {
         let server = try HTTPServer(port: 0, queue: DispatchQueue(label: "launcher-route-test"),
                                     budget: HTTPConnectionBudget())
@@ -161,7 +140,7 @@ struct LauncherRouteHandlerTests {
                   route == .launcherRead || route == .launcherSave else {
                 return conn.respond(404, text: "not found")
             }
-            LauncherRoute.handle(req, loader: loader, saver: saver, on: conn, catalog: catalog)
+            LauncherRoute.handle(req, store: store, on: conn, catalog: catalog)
         }
         try #require(resourceEventually { (server.port?.rawValue ?? 0) > 0 })
         return (server, try #require(server.port))
@@ -194,115 +173,426 @@ struct LauncherRouteHandlerTests {
         return try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
     }
 
-    @Test func getReturnsSelectedAndAll() throws {
-        let catalog = { [["name": "Safari", "path": "/Applications/Safari.app"]] }
-        let (server, port) = try startServer(loader: { ["/Applications/Safari.app"] }, saver: { _ in 0 }, catalog: catalog)
-        defer { server.stop() }
-
-        let response = try get(port: port)
-        #expect(response.hasPrefix("HTTP/1.1 200 OK\r\n"))
-        let json = try jsonBody(response)
-        #expect(json["selected"] as? [String] == ["/Applications/Safari.app"])
-        #expect(json["all"] as? [[String: String]] == catalog())
+    private func saveBody(_ paths: [String], expected: String?) -> String {
+        var body = "n=\(paths.count)&paths=\(paths.joined(separator: "\n"))"
+        if let expected { body += "&expected=\(expected)" }
+        return body
     }
 
-    @Test func getWithNilSelectedReturnsNull() throws {
-        let catalog = { [["name": "Safari", "path": "/Applications/Safari.app"]] }
-        let (server, port) = try startServer(loader: { nil }, saver: { _ in 0 }, catalog: catalog)
+    // MARK: T-A — GET → edit → POST → render → edit again
+
+    @Test func getOnALegacyDirectoryMigratesAndServesTheFullShape() throws {
+        let directory = try temporaryStoreDirectory()
+        defer { removeStoreDirectory(directory) }
+        let seeded = ["/Applications/Safari.app", "/Applications/Xcode.app", "/Applications/Notes.app"]
+        let legacyBytes = try seedLegacy(directory, seeded)
+        let (server, port) = try startServer(store: ConfigurationStore(directory: directory),
+                                             catalog: { self.catalog })
         defer { server.stop() }
 
         let response = try get(port: port)
         #expect(response.hasPrefix("HTTP/1.1 200 OK\r\n"))
         let json = try jsonBody(response)
+        #expect(json["selected"] as? [String] == seeded)
+        #expect(json["all"] as? [[String: String]] == catalog)
+        #expect(json["configuration"] as? String == "migrated")
+        #expect(json["writable"] as? Bool == true)
+        let revision = try #require(json["revision"] as? String)
+        #expect(!revision.isEmpty)
+        // GET never carries the POST-only field, and `version` only exists for unsupported-version.
+        #expect(json["saved"] == nil)
+        #expect(json["version"] == nil)
+
+        // The migration committed config.json; the frozen legacy file is byte-intact.
+        #expect(fileExists(storePath(directory, ConfigurationStore.configurationName)))
+        #expect(readBytes(at: storePath(directory, ConfigurationStore.legacyName)) == legacyBytes)
+        #expect(leftoverTemporaries(directory).isEmpty)
+    }
+
+    @Test func postSavesAndRefreshesTheRevisionSoASecondEditNeedsNoGet() throws {
+        let directory = try temporaryStoreDirectory()
+        defer { removeStoreDirectory(directory) }
+        try seedLegacy(directory, ["/Applications/Safari.app", "/Applications/Xcode.app",
+                                   "/Applications/Notes.app"])
+        let (server, port) = try startServer(store: ConfigurationStore(directory: directory),
+                                             catalog: { self.catalog })
+        defer { server.stop() }
+
+        let getJSON = try jsonBody(try get(port: port))
+        let firstRevision = try #require(getJSON["revision"] as? String)
+
+        // Model the editor: drop one, add one, exactly seven or fewer.
+        let draft = ["/Applications/Safari.app", "/Applications/Notes.app", "/Applications/Music.app"]
+        let response = try post(port: port, body: saveBody(draft, expected: firstRevision))
+        #expect(response.hasPrefix("HTTP/1.1 200 OK\r\n"))
+        let json = try jsonBody(response)
+        #expect(json["saved"] as? Int == 3)
+        #expect(json["selected"] as? [String] == draft)
+        // The catalog survives the save: renderKeys()/byPath() resolve against `all`.
+        #expect(json["all"] as? [[String: String]] == catalog)
+        #expect(json["configuration"] as? String == "v1")
+        #expect(json["writable"] as? Bool == true)
+        let secondRevision = try #require(json["revision"] as? String)
+        #expect(secondRevision != firstRevision)
+        // One shape for both methods: the POST keys are exactly the GET keys plus `saved`.
+        #expect(Set(json.keys) == Set(getJSON.keys).union(["saved"]))
+
+        // The first save over a migrated document keeps the previous generation.
+        #expect(readBytes(at: storePath(directory, ConfigurationStore.backupName)) != nil)
+
+        // Edit again using only the POST response — no second GET.
+        let secondDraft = ["/Applications/Safari.app"]
+        let second = try post(port: port, body: saveBody(secondDraft, expected: secondRevision))
+        #expect(second.hasPrefix("HTTP/1.1 200 OK\r\n"))
+        let secondJSON = try jsonBody(second)
+        #expect(secondJSON["saved"] as? Int == 1)
+        #expect(secondJSON["selected"] as? [String] == secondDraft)
+        #expect((secondJSON["revision"] as? String) != secondRevision)
+    }
+
+    // MARK: T-B — revision lifecycle
+
+    @Test func aStaleRevisionIs409AndChangesNothing() throws {
+        let directory = try temporaryStoreDirectory()
+        defer { removeStoreDirectory(directory) }
+        try seedConfiguration(directory, appDocument(count: 1))
+        let store = ConfigurationStore(directory: directory)
+        let staleRevision = try #require(store.load().revision)
+
+        // A second writer (another process, modeled by a second store) commits revision Y.
+        let outcome = store.write(paths: ["/Applications/App2.app"], expectedRevision: staleRevision)
+        guard case .saved(let committed) = outcome,
+              let currentRevision = committed.revision, currentRevision != staleRevision else {
+            Issue.record("the fixture's second write did not produce a fresh revision")
+            return
+        }
+        let configAfterY = readBytes(at: storePath(directory, ConfigurationStore.configurationName))
+        let backupAfterY = readBytes(at: storePath(directory, ConfigurationStore.backupName))
+
+        let (server, port) = try startServer(store: store)
+        defer { server.stop() }
+        let response = try post(port: port,
+                                body: saveBody(["/Applications/App3.app"], expected: staleRevision))
+        #expect(response.hasPrefix("HTTP/1.1 409 Conflict\r\n"))
+        #expect(response.hasSuffix("\r\n\r\nstale"))
+        #expect(readBytes(at: storePath(directory, ConfigurationStore.configurationName)) == configAfterY)
+        #expect(readBytes(at: storePath(directory, ConfigurationStore.backupName)) == backupAfterY)
+        #expect(leftoverTemporaries(directory).isEmpty)
+    }
+
+    @Test func aMissingOrEmptyExpectedRevisionIs400AndChangesNothing() throws {
+        let directory = try temporaryStoreDirectory()
+        defer { removeStoreDirectory(directory) }
+        let baseBytes = try seedConfiguration(directory, appDocument(count: 1))
+        let (server, port) = try startServer(store: ConfigurationStore(directory: directory))
+        defer { server.stop() }
+
+        for body in ["n=1&paths=/Applications/Safari.app",
+                     "n=1&paths=/Applications/Safari.app&expected="] {
+            let response = try post(port: port, body: body)
+            #expect(response.hasPrefix("HTTP/1.1 400 Bad Request\r\n"))
+            #expect(response.hasSuffix("\r\n\r\nmissing-revision"))
+            #expect(readBytes(at: storePath(directory, ConfigurationStore.configurationName)) == baseBytes)
+        }
+        #expect(leftoverTemporaries(directory).isEmpty)
+    }
+
+    @Test func aDamagedDocumentRefusesBeforeTheMissingRevisionCheck() throws {
+        // T-B7 precedence: "reload the page" is useless advice when the file is damaged.
+        let directory = try temporaryStoreDirectory()
+        defer { removeStoreDirectory(directory) }
+        let damaged = "{\"version\":1,\"controls\":[],}"
+        try writeText(damaged, to: storePath(directory, ConfigurationStore.configurationName))
+        let (server, port) = try startServer(store: ConfigurationStore(directory: directory))
+        defer { server.stop() }
+
+        let response = try post(port: port, body: "n=1&paths=/Applications/Safari.app")
+        #expect(response.hasPrefix("HTTP/1.1 409 Conflict\r\n"))
+        #expect(response.hasSuffix("\r\n\r\nmalformed"))
+
+        let getResponse = try get(port: port)
+        #expect(getResponse.hasPrefix("HTTP/1.1 200 OK\r\n"))
+        let json = try jsonBody(getResponse)
+        #expect(json["configuration"] as? String == "malformed")
         #expect(json["selected"] is NSNull)
-        #expect(json["all"] as? [[String: String]] == catalog())
+        #expect(json["writable"] as? Bool == false)
+        // A damaged document still publishes a raw-bytes revision, for diagnostics.
+        #expect(json["revision"] is String)
+        // The damaged file is preserved exactly: nothing deletes or repairs it.
+        let bytes = readBytes(at: storePath(directory, ConfigurationStore.configurationName))
+        #expect(bytes == [UInt8](Data(damaged.utf8)))
     }
 
-    @Test func postWithValidPathsReturnsSavedCount() throws {
-        let state = SelectionState(["/Applications/Old.app"])
-        let catalog = { [["name": "Safari", "path": "/Applications/Safari.app"]] }
-        let (server, port) = try startServer(loader: state.load, saver: state.save, catalog: catalog)
+    // MARK: Read-only states
+
+    @Test func anUnsupportedVersionCarriesTheIntegerDiagnosisAndRefusesSaves() throws {
+        let directory = try temporaryStoreDirectory()
+        defer { removeStoreDirectory(directory) }
+        let future = "{\"version\":2,\"controls\":[]}"
+        try writeText(future, to: storePath(directory, ConfigurationStore.configurationName))
+        let (server, port) = try startServer(store: ConfigurationStore(directory: directory))
         defer { server.stop() }
 
-        let body = "n=2&paths=/Applications/Safari.app\n/Applications/Xcode.app"
+        let json = try jsonBody(try get(port: port))
+        #expect(json["configuration"] as? String == "unsupported-version")
+        #expect(json["version"] as? Int == 2)
+        #expect(json["writable"] as? Bool == false)
+        #expect(json["selected"] is NSNull)
+        let revision = try #require(json["revision"] as? String)
+
+        let response = try post(port: port, body: saveBody(["/Applications/Safari.app"], expected: revision))
+        #expect(response.hasPrefix("HTTP/1.1 409 Conflict\r\n"))
+        #expect(response.hasSuffix("\r\n\r\nunsupported-version"))
+        #expect(readBytes(at: storePath(directory, ConfigurationStore.configurationName)) == [UInt8](Data(future.utf8)))
+    }
+
+    @Test func anOverLimitDocumentIsServedWholeAndRefusesATruncatingSave() throws {
+        // T-C: 8 controls must not become 7.
+        let directory = try temporaryStoreDirectory()
+        defer { removeStoreDirectory(directory) }
+        let document = try appDocument(count: 8)
+        let baseBytes = try seedConfiguration(directory, document)
+        let (server, port) = try startServer(store: ConfigurationStore(directory: directory))
+        defer { server.stop() }
+
+        let json = try jsonBody(try get(port: port))
+        let expectedPaths = (1...8).map { "/Applications/App\($0).app" }
+        #expect(json["selected"] as? [String] == expectedPaths)   // untruncated
+        #expect(json["writable"] as? Bool == false)
+        #expect(json["configuration"] as? String == "too-many-controls")
+        let revision = try #require(json["revision"] as? String)
+
+        // The editor's slice(0, 7) is exactly the save the server must refuse.
+        let truncated = Array(expectedPaths.prefix(7))
+        let response = try post(port: port, body: saveBody(truncated, expected: revision))
+        #expect(response.hasPrefix("HTTP/1.1 409 Conflict\r\n"))
+        #expect(response.hasSuffix("\r\n\r\ntoo-many-controls"))
+        #expect(readBytes(at: storePath(directory, ConfigurationStore.configurationName)) == baseBytes)
+        #expect(!fileExists(storePath(directory, ConfigurationStore.backupName)))
+        #expect(leftoverTemporaries(directory).isEmpty)
+
+        // Control: the same shape at seven controls is writable and saves.
+        let sevenDirectory = try temporaryStoreDirectory()
+        defer { removeStoreDirectory(sevenDirectory) }
+        try seedConfiguration(sevenDirectory, try appDocument(count: 7))
+        let (sevenServer, sevenPort) = try startServer(store: ConfigurationStore(directory: sevenDirectory))
+        defer { sevenServer.stop() }
+        let sevenJSON = try jsonBody(try get(port: sevenPort))
+        #expect(sevenJSON["writable"] as? Bool == true)
+        let sevenRevision = try #require(sevenJSON["revision"] as? String)
+        let sevenPaths = (1...7).map { "/Applications/App\($0).app" }
+        let saved = try post(port: sevenPort, body: saveBody(sevenPaths, expected: sevenRevision))
+        #expect(saved.hasPrefix("HTTP/1.1 200 OK\r\n"))
+        #expect(try jsonBody(saved)["saved"] as? Int == 7)
+    }
+
+    @Test func aWrongFormatDocumentIsReportedAndPreserved() throws {
+        // A legacy array in config.json is a layout error, never a document to adopt.
+        let directory = try temporaryStoreDirectory()
+        defer { removeStoreDirectory(directory) }
+        let misplaced = "[\"/Applications/Safari.app\"]"
+        try writeText(misplaced, to: storePath(directory, ConfigurationStore.configurationName))
+        let (server, port) = try startServer(store: ConfigurationStore(directory: directory))
+        defer { server.stop() }
+
+        let json = try jsonBody(try get(port: port))
+        #expect(json["configuration"] as? String == "wrong-format")
+        #expect(json["writable"] as? Bool == false)
+        #expect(json["selected"] is NSNull)
+        let revision = try #require(json["revision"] as? String)
+        let response = try post(port: port, body: saveBody(["/Applications/Safari.app"], expected: revision))
+        #expect(response.hasPrefix("HTTP/1.1 409 Conflict\r\n"))
+        #expect(response.hasSuffix("\r\n\r\nwrong-format"))
+        #expect(readBytes(at: storePath(directory, ConfigurationStore.configurationName))
+            == [UInt8](Data(misplaced.utf8)))
+    }
+
+    @Test func anUnrepresentableLegacySelectionIsServedReadOnlyAndPreserved() throws {
+        // F4/R10: an entry too long to migrate is still shown, and never overwritten.
+        let directory = try temporaryStoreDirectory()
+        defer { removeStoreDirectory(directory) }
+        let longPath = String(repeating: "a", count: ConfigurationStorePolicy.maximumEntryBytes + 1)
+        let legacyBytes = try seedLegacy(directory, [longPath])
+        let (server, port) = try startServer(store: ConfigurationStore(directory: directory))
+        defer { server.stop() }
+
+        let json = try jsonBody(try get(port: port))
+        #expect(json["configuration"] as? String == "legacy-readonly")
+        #expect(json["selected"] as? [String] == [longPath])
+        #expect(json["writable"] as? Bool == false)
+        let revision = try #require(json["revision"] as? String)
+
+        let response = try post(port: port, body: saveBody(["/Applications/Safari.app"], expected: revision))
+        #expect(response.hasPrefix("HTTP/1.1 409 Conflict\r\n"))
+        #expect(response.hasSuffix("\r\n\r\nlegacy-readonly"))
+        #expect(readBytes(at: storePath(directory, ConfigurationStore.legacyName)) == legacyBytes)
+        #expect(!fileExists(storePath(directory, ConfigurationStore.configurationName)))
+    }
+
+    // MARK: Concurrency
+
+    @Test func aContendedLockReadsAsMigratingWithoutRevisionAndWritesAs503() throws {
+        // T-B8: a contended read publishes no token the server cannot honour.
+        let directory = try temporaryStoreDirectory()
+        defer { removeStoreDirectory(directory) }
+        try seedLegacy(directory, ["/Applications/Safari.app"])
+        let store = ConfigurationStore(directory: directory)
+        let (server, port) = try startServer(store: store)
+        defer { server.stop() }
+
+        // Hold the real lock from a second file description, which is what another process does.
+        let descriptor = store.lockPath.withCString { open($0, O_RDWR | O_CREAT, 0o600) }
+        guard descriptor >= 0 else {
+            Issue.record("the lock file could not be opened")
+            return
+        }
+        defer { close(descriptor) }
+        #expect(flock(descriptor, LOCK_EX | LOCK_NB) == 0)
+        defer { flock(descriptor, LOCK_UN) }
+
+        let response = try get(port: port)
+        #expect(response.hasPrefix("HTTP/1.1 200 OK\r\n"))
+        let json = try jsonBody(response)
+        #expect(json["configuration"] as? String == "migrating")
+        #expect(json["writable"] as? Bool == false)
+        #expect(json["revision"] == nil)   // the key is absent entirely, not null
+        // The selection is still served: the legacy file is authoritative until migration commits.
+        #expect(json["selected"] as? [String] == ["/Applications/Safari.app"])
+        #expect(!fileExists(storePath(directory, ConfigurationStore.configurationName)))
+
+        let saveResponse = try post(port: port,
+                                    body: saveBody(["/Applications/Safari.app"], expected: "0000000000000000"))
+        #expect(saveResponse.hasPrefix("HTTP/1.1 503 Service Unavailable\r\n"))
+        #expect(saveResponse.hasSuffix("\r\n\r\nbusy"))
+        #expect(!fileExists(storePath(directory, ConfigurationStore.configurationName)))
+    }
+
+    // MARK: Failure injection through the store's filesystem seam
+
+    @Test func aFailedPrepareIs500WriteFailedAndLeavesNothingBehind() throws {
+        let directory = try temporaryStoreDirectory()
+        defer { removeStoreDirectory(directory) }
+        let baseBytes = try seedConfiguration(directory, appDocument(count: 1))
+        let revision = try #require(ConfigurationStore(directory: directory).load().revision)
+
+        var operations = ConfigurationFileOperations.live
+        operations.makeTemporary = { _, _ in nil }
+        let (server, port) = try startServer(store: ConfigurationStore(directory: directory,
+                                                                       operations: operations))
+        defer { server.stop() }
+
+        let response = try post(port: port, body: saveBody(["/Applications/Safari.app"], expected: revision))
+        #expect(response.hasPrefix("HTTP/1.1 500 Internal Server Error\r\n"))
+        #expect(response.hasSuffix("\r\n\r\nwrite-failed"))
+        #expect(readBytes(at: storePath(directory, ConfigurationStore.configurationName)) == baseBytes)
+        #expect(!fileExists(storePath(directory, ConfigurationStore.backupName)))
+        #expect(leftoverTemporaries(directory).isEmpty)
+    }
+
+    @Test func aFailedVerificationOfAnInitialCommitIs500MigrationFailedAndRetainsTheDocument() throws {
+        let directory = try temporaryStoreDirectory()
+        defer { removeStoreDirectory(directory) }
+        let store = ConfigurationStore(directory: directory)
+        let unconfiguredRevision = try #require(store.load().revision)
+
+        var operations = ConfigurationFileOperations.live
+        operations.readForVerification = { _, _ in .unreadable }
+        let (server, port) = try startServer(store: ConfigurationStore(directory: directory,
+                                                                       operations: operations))
+        defer { server.stop() }
+
+        let response = try post(port: port,
+                                body: saveBody(["/Applications/Safari.app"], expected: unconfiguredRevision))
+        #expect(response.hasPrefix("HTTP/1.1 500 Internal Server Error\r\n"))
+        #expect(response.hasSuffix("\r\n\r\nmigration-failed"))
+        // Retained as evidence, never deleted, and never reported as migrated or saved.
+        let expectedBytes = try [UInt8](encodedDocument(try appDocumentFrom(paths: ["/Applications/Safari.app"])))
+        #expect(readBytes(at: storePath(directory, ConfigurationStore.configurationName)) == expectedBytes)
+        #expect(leftoverTemporaries(directory).isEmpty)
+    }
+
+    // MARK: Preservation (requirement 6 — no Apps.isKnown filter)
+
+    @Test func aSavePreservesOrderEmptyEntriesDuplicatesAndUninstalledPaths() throws {
+        let directory = try temporaryStoreDirectory()
+        defer { removeStoreDirectory(directory) }
+        let store = ConfigurationStore(directory: directory)
+        let (server, port) = try startServer(store: store, catalog: { self.catalog })
+        defer { server.stop() }
+
+        let unconfigured = try jsonBody(try get(port: port))
+        #expect(unconfigured["configuration"] as? String == "unconfigured")
+        #expect(unconfigured["selected"] is NSNull)
+        #expect(unconfigured["writable"] as? Bool == true)
+        let revision = try #require(unconfigured["revision"] as? String)
+
+        // One uninstalled path, one empty entry, one duplicate — in a chosen order.
+        let selection = ["/NotInstalled/Zed.app", "", "/Applications/Safari.app", "/Applications/Safari.app"]
+        let body = "n=4&paths=\(selection.joined(separator: "\n"))&expected=\(revision)"
         let response = try post(port: port, body: body)
         #expect(response.hasPrefix("HTTP/1.1 200 OK\r\n"))
-        let expected = ["/Applications/Safari.app", "/Applications/Xcode.app"]
         let json = try jsonBody(response)
-        #expect(json["saved"] as? Int == 2)
-        #expect(json["selected"] as? [String] == expected)
-        #expect(json["all"] as? [[String: String]] == catalog())
-        #expect(state.paths == expected)
-        #expect(state.saveCount == 1)
+        #expect(json["saved"] as? Int == 4)
+        #expect(json["selected"] as? [String] == selection)   // element-for-element, in order
+
+        // A follow-up GET returns the same array, and the stored document round-trips.
+        let reread = try jsonBody(try get(port: port))
+        #expect(reread["selected"] as? [String] == selection)
+        #expect(reread["configuration"] as? String == "v1")
     }
 
-    @Test func postWithInvalidCountReturns400() throws {
-        let (server, port) = try startServer(loader: { [] }, saver: { _ in 0 })
+    @Test func anUnconfiguredDirectorySavesAnEmptySelection() throws {
+        let directory = try temporaryStoreDirectory()
+        defer { removeStoreDirectory(directory) }
+        let store = ConfigurationStore(directory: directory)
+        let revision = try #require(store.load().revision)
+        #expect(revision == ConfigurationRevision.ofUnconfigured())
+        let (server, port) = try startServer(store: store)
         defer { server.stop() }
 
-        let body = "n=8&paths=/Applications/Safari.app"
-        let response = try post(port: port, body: body)
-        #expect(response.hasPrefix("HTTP/1.1 400 Bad Request\r\n"))
-        #expect(response.hasSuffix("\r\n\r\ninvalid-count"))
+        let response = try post(port: port, body: "n=0&paths=&expected=\(revision)")
+        #expect(response.hasPrefix("HTTP/1.1 200 OK\r\n"))
+        let json = try jsonBody(response)
+        #expect(json["saved"] as? Int == 0)
+        // An empty selection is an empty array, not null: null means "cannot be expressed".
+        #expect(json["selected"] as? [String] == [])
+        #expect(json["configuration"] as? String == "v1")
     }
 
-    @Test func postWithCountMismatchReturns400() throws {
-        let (server, port) = try startServer(loader: { [] }, saver: { _ in 0 })
-        defer { server.stop() }
+    // MARK: Syntax refusals (route level, before any store access)
 
-        let body = "n=2&paths=/Applications/Safari.app"
-        let response = try post(port: port, body: body)
-        #expect(response.hasPrefix("HTTP/1.1 400 Bad Request\r\n"))
-        #expect(response.hasSuffix("\r\n\r\ncount-mismatch"))
-    }
-
-    @Test func postWithEntryTooLongReturns400() throws {
-        let (server, port) = try startServer(loader: { [] }, saver: { _ in 0 })
+    @Test func routeSyntaxRefusalsAre400AndTouchNothing() throws {
+        let directory = try temporaryStoreDirectory()
+        defer { removeStoreDirectory(directory) }
+        let (server, port) = try startServer(store: ConfigurationStore(directory: directory))
         defer { server.stop() }
 
         let longPath = String(repeating: "a", count: ConfigurationStorePolicy.maximumEntryBytes + 1)
-        let body = "n=1&paths=\(longPath)"
-        let response = try post(port: port, body: body)
-        #expect(response.hasPrefix("HTTP/1.1 400 Bad Request\r\n"))
-        #expect(response.hasSuffix("\r\n\r\nentry-too-long"))
+        for (body, tokenText) in [("n=8&paths=/Applications/Safari.app", "invalid-count"),
+                                  ("n=2&paths=/Applications/Safari.app", "count-mismatch"),
+                                  ("n=1&paths=\(longPath)", "entry-too-long")] {
+            let response = try post(port: port, body: body)
+            #expect(response.hasPrefix("HTTP/1.1 400 Bad Request\r\n"))
+            #expect(response.hasSuffix("\r\n\r\n\(tokenText)"))
+        }
+        // A legacy client (no `n`) is bounded by the store's product rule instead.
+        let eightPaths = (1...8).map { "/Applications/App\($0).app" }.joined(separator: "\n")
+        let legacy = try post(port: port, body: "paths=\(eightPaths)")
+        #expect(legacy.hasPrefix("HTTP/1.1 400 Bad Request\r\n"))
+        #expect(legacy.hasSuffix("\r\n\r\ntoo-many-keys"))
+        #expect(!fileExists(storePath(directory, ConfigurationStore.configurationName)))
+        #expect(leftoverTemporaries(directory).isEmpty)
     }
 
-    @Test func postWithSaveErrorReturns500() throws {
-        let (server, port) = try startServer(loader: { [] }, saver: { _ in throw NSError(domain: "test", code: 1) })
+    // MARK: Authorization boundary
+
+    @Test func authenticationIsRequiredBeforeTheStoreIsTouched() throws {
+        let directory = try temporaryStoreDirectory()
+        defer { removeStoreDirectory(directory) }
+        let (server, port) = try startServer(store: ConfigurationStore(directory: directory))
         defer { server.stop() }
 
-        let body = "n=1&paths=/Applications/Safari.app"
-        let response = try post(port: port, body: body)
-        #expect(response.hasPrefix("HTTP/1.1 500 Internal Server Error\r\n"))
-        #expect(response.hasSuffix("\r\n\r\nwrite-failed"))
-    }
-
-    @Test func postWithLegacyBranchPreservesEmptyPaths() throws {
-        // No `n` parameter: legacy branch, empty subsequences omitted.
-        let state = SelectionState([])
-        let (server, port) = try startServer(loader: state.load, saver: state.save)
-        defer { server.stop() }
-
-        let body = "paths=/Applications/Safari.app\n\n/Applications/Xcode.app"
-        let response = try post(port: port, body: body)
-        #expect(response.hasPrefix("HTTP/1.1 200 OK\r\n"))
-        // Legacy branch omits empty subsequences, so the middle empty is dropped.
-        let expected = ["/Applications/Safari.app", "/Applications/Xcode.app"]
-        let json = try jsonBody(response)
-        #expect(json["saved"] as? Int == 2)
-        #expect(json["selected"] as? [String] == expected)
-        #expect(json["all"] as? [[String: String]] == [])
-        #expect(state.paths == expected)
-        #expect(state.saveCount == 1)
-    }
-
-    @Test func authenticationIsRequiredBeforeReadingOrSaving() throws {
-        let original = ["/Applications/Original.app"]
-        let state = SelectionState(original)
-        let (server, port) = try startServer(loader: state.load, saver: state.save)
-        defer { server.stop() }
-
-        let body = "n=1&paths=/Applications/Changed.app"
+        let body = saveBody(["/Applications/Changed.app"], expected: "0000000000000000")
         for (target, status) in [
             ("/launcher", "403 Forbidden"),
             ("/launcher?k=wrong-token", "403 Forbidden"),
@@ -316,8 +606,8 @@ struct LauncherRouteHandlerTests {
         // A token in the body cannot substitute for query-token authentication.
         let bodyToken = try post(port: port, target: "/launcher", body: "k=\(token)&" + body)
         #expect(bodyToken.hasPrefix("HTTP/1.1 403 Forbidden\r\n"))
-        #expect(state.loadCount == 0)
-        #expect(state.saveCount == 0)
-        #expect(state.paths == original)
+        // Admission refused every request before the handler, so the store never ran: no lock
+        // file, no migration, no temporaries.
+        #expect(directoryEntries(directory).isEmpty)
     }
 }

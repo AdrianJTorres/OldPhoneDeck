@@ -1,5 +1,5 @@
 // M2.5 S2 — `--config-dir` option coverage: default paths are the production paths exactly,
-// custom paths are resolved to absolute, and the token/TLS/launcher redirection seam works.
+// custom paths are resolved to absolute, and the token/TLS/store redirection seam works.
 // Never reads or writes the real ~/.oldphonedeck, never starts the application.
 // `--config-dir` with a missing value and an unusable path exit(2) from `Options.init`, which
 // cannot run inside the test process; those paths are covered by the fixture run of the binary.
@@ -8,8 +8,8 @@ import Foundation
 import Testing
 @testable import oldphonedeck
 
-/// Serialized because `LocalTLS.dir` and `Launcher.file` are process-wide; every mutating test
-/// restores the production defaults before the next one runs.
+/// Serialized because `LocalTLS.dir` is process-wide; every mutating test restores the production
+/// default before the next one runs.
 @Suite(.serialized)
 struct ConfigDirOptionTests {
     private static let productionDir =
@@ -22,7 +22,6 @@ struct ConfigDirOptionTests {
 
     private func restoreProductionDefaults() {
         LocalTLS.use(configDir: Self.productionDir)
-        Launcher.use(configDir: Self.productionDir)
     }
 
     // MARK: Defaults (requirement 1 — unchanged without --config-dir)
@@ -32,9 +31,11 @@ struct ConfigDirOptionTests {
         #expect(opts.configDir == Self.productionDir)
     }
 
-    @Test func defaultTLSAndLauncherPathsAreTheProductionPaths() {
+    @Test func defaultTLSAndStorePathsAreTheProductionPaths() {
         #expect(LocalTLS.dir == Self.productionDir.appendingPathComponent("tls"))
-        #expect(Launcher.file == Self.productionDir.appendingPathComponent("launcher.json"))
+        let store = ConfigurationStore(directory: Self.productionDir)
+        #expect(store.legacyPath == Self.productionDir.appendingPathComponent("launcher.json").path)
+        #expect(store.configurationPath == Self.productionDir.appendingPathComponent("config.json").path)
     }
 
     // MARK: Resolution (requirement 3 — always absolute)
@@ -95,9 +96,9 @@ struct ConfigDirOptionTests {
         #expect((attrs[.posixPermissions] as? NSNumber)?.intValue == 0o755)
     }
 
-    // MARK: Custom directory (requirement 2 — isolate token, TLS and launcher config)
+    // MARK: Custom directory (requirement 2 — isolate token, TLS and configuration)
 
-    @Test func customDirIsCreatedUpFrontAndRedirectsTokenTLSAndLauncher() throws {
+    @Test func customDirIsCreatedUpFrontAndRedirectsTokenTLSAndStore() throws {
         let dir = tempConfigDir()
         defer {
             restoreProductionDefaults()
@@ -112,10 +113,12 @@ struct ConfigDirOptionTests {
         #expect((attrs[.posixPermissions] as? NSNumber)?.intValue == 0o700)
 
         LocalTLS.use(configDir: opts.configDir)
-        Launcher.use(configDir: opts.configDir)
         #expect(LocalTLS.dir.path == opts.configDir.path + "/tls")
-        #expect(Launcher.file.path == opts.configDir.path + "/launcher.json")
         #expect(LocalTLS.caDER.path == opts.configDir.path + "/tls/oldphonedeck-ca.cer")
+        let store = ConfigurationStore(directory: opts.configDir)
+        #expect(store.legacyPath == opts.configDir.path + "/launcher.json")
+        #expect(store.configurationPath == opts.configDir.path + "/config.json")
+        #expect(store.lockPath == opts.configDir.path + "/config.lock")
 
         // The token path derives from the same directory: a fresh config dir holds no token, so
         // loadToken() would mint an isolated one instead of reading the production token.
@@ -123,18 +126,16 @@ struct ConfigDirOptionTests {
         #expect(!FileManager.default.fileExists(atPath: tokenFile.path))
     }
 
-    @Test func restoringTheProductionDirRecoversTheDefaultPaths() throws {
+    @Test func restoringTheProductionDirRecoversTheDefaultTLSPath() throws {
         let dir = tempConfigDir()
         defer {
             restoreProductionDefaults()
             try? FileManager.default.removeItem(at: dir)
         }
         LocalTLS.use(configDir: dir)
-        Launcher.use(configDir: dir)
         #expect(LocalTLS.dir.path == dir.path + "/tls")
         restoreProductionDefaults()
         #expect(LocalTLS.dir == Self.productionDir.appendingPathComponent("tls"))
-        #expect(Launcher.file == Self.productionDir.appendingPathComponent("launcher.json"))
     }
 
     // Requirement 5 (the app catalog is never redirected) is structural: `Apps.list()` keeps
