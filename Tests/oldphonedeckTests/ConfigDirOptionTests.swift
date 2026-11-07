@@ -70,6 +70,31 @@ struct ConfigDirOptionTests {
         #expect(throws: Options.ConfigDirError.empty) { try Options.resolveConfigDir("") }
     }
 
+    @Test func resolveRejectsAValueThatLooksLikeAnotherOption() {
+        #expect(throws: Options.ConfigDirError.flagLike("--port")) { try Options.resolveConfigDir("--port") }
+        #expect(throws: Options.ConfigDirError.flagLike("-h")) { try Options.resolveConfigDir("-h") }
+    }
+
+    // MARK: Permissions (ADR-016 — a newly created configuration directory is 0700)
+
+    @Test func createConfigDirAppliesMode0700ToANewDirectory() throws {
+        let dir = tempConfigDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try Options.createConfigDir(dir)
+        let attrs = try FileManager.default.attributesOfItem(atPath: dir.path)
+        #expect((attrs[.posixPermissions] as? NSNumber)?.intValue == 0o700)
+    }
+
+    @Test func createConfigDirNeverChangesAnExistingDirectorysMode() throws {
+        let dir = tempConfigDir()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dir.path)
+        try Options.createConfigDir(dir)
+        let attrs = try FileManager.default.attributesOfItem(atPath: dir.path)
+        #expect((attrs[.posixPermissions] as? NSNumber)?.intValue == 0o755)
+    }
+
     // MARK: Custom directory (requirement 2 — isolate token, TLS and launcher config)
 
     @Test func customDirIsCreatedUpFrontAndRedirectsTokenTLSAndLauncher() throws {
@@ -79,10 +104,12 @@ struct ConfigDirOptionTests {
             try? FileManager.default.removeItem(at: dir)
         }
         let opts = Options(["oldphonedeck", "--config-dir", dir.path])
-        // Options.init creates the directory so an unusable path fails at startup.
+        // Options.init creates the directory so an unusable path fails at startup, with 0700.
         var isDirectory: ObjCBool = false
         #expect(FileManager.default.fileExists(atPath: opts.configDir.path, isDirectory: &isDirectory))
         #expect(isDirectory.boolValue)
+        let attrs = try FileManager.default.attributesOfItem(atPath: opts.configDir.path)
+        #expect((attrs[.posixPermissions] as? NSNumber)?.intValue == 0o700)
 
         LocalTLS.use(configDir: opts.configDir)
         Launcher.use(configDir: opts.configDir)

@@ -9,11 +9,12 @@ struct Options {
     var configDir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".oldphonedeck")
 
     enum ConfigDirError: Error, Equatable, CustomStringConvertible {
-        case missingValue, empty
+        case missingValue, empty, flagLike(String)
         var description: String {
             switch self {
             case .missingValue: return "--config-dir requires PATH (try --help)"
             case .empty: return "--config-dir requires a non-empty PATH (try --help)"
+            case .flagLike(let value): return "--config-dir requires PATH, got option \(value) (try --help)"
             }
         }
     }
@@ -23,7 +24,20 @@ struct Options {
     static func resolveConfigDir(_ raw: String?) throws -> URL {
         guard let raw else { throw ConfigDirError.missingValue }
         guard !raw.isEmpty else { throw ConfigDirError.empty }
+        guard !raw.hasPrefix("-") else { throw ConfigDirError.flagLike(raw) }
         return URL(fileURLWithPath: (raw as NSString).expandingTildeInPath).standardizedFileURL
+    }
+
+    /// Creates the configuration directory with `0700` when it does not exist, mirroring
+    /// `POSIXConfigurationFile.createDirectory` (ADR-016): an existing directory keeps its current
+    /// mode — the production `~/.oldphonedeck` is `0755` today and this has no business changing
+    /// it. The mode is applied explicitly to the leaf, which will hold the token and the TLS
+    /// identity; intermediates keep the process default.
+    static func createConfigDir(_ url: URL) throws {
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue { return }
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
     }
 
     init(_ args: [String]) {
@@ -37,7 +51,7 @@ struct Options {
                     configDir = try Options.resolveConfigDir(it.next())
                     // Created up front so an isolated instance fails here rather than falling
                     // back to the production directory silently at first use.
-                    try FileManager.default.createDirectory(at: configDir, withIntermediateDirectories: true)
+                    try Options.createConfigDir(configDir)
                 } catch let e as ConfigDirError { print(e.description); exit(2) }
                 catch { print("--config-dir is unusable: \(error.localizedDescription)"); exit(2) }
             case "-h", "--help":
