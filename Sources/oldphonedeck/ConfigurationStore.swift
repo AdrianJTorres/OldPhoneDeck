@@ -419,10 +419,21 @@ enum POSIXConfigurationFile {
     }
 
     /// `O_NONBLOCK` here for the same reason as in `readBounded`: if something replaced the lock
-    /// file with a FIFO, opening it must not block the shared HTTP queue.
+    /// file with a FIFO, opening it must not block the shared HTTP queue. `O_NOFOLLOW` and the
+    /// regular-file check prevent `fchmod` or `flock` from operating on a symlink or special file.
     static func openLock(_ path: String) -> Int32? {
-        let descriptor = path.withCString { open($0, O_RDWR | O_CREAT | O_NONBLOCK, 0o600) }
+        let descriptor = path.withCString { open($0, O_RDWR | O_CREAT | O_NONBLOCK | O_NOFOLLOW, 0o600) }
         guard descriptor >= 0 else { return nil }
+        var info = stat()
+        guard fstat(descriptor, &info) == 0 else {
+            close(descriptor)
+            return nil
+        }
+        // Reject symlinks, directories, FIFOs and devices: a lock file must be a regular file.
+        guard UInt32(info.st_mode) & UInt32(S_IFMT) == UInt32(S_IFREG) else {
+            close(descriptor)
+            return nil
+        }
         guard fchmod(descriptor, 0o600) == 0 else {
             close(descriptor)
             return nil
@@ -520,11 +531,15 @@ struct ConfigurationStore {
     /// visible and matches the stateless request handling the rest of the product assumes.
     func load() -> ConfigurationRead {
         let classification = classify()
-        guard case .migrationPending(let configuration, let paths) = classification.state else {
+        guard case .migrationPending = classification.state else {
             return Self.read(from: classification)
         }
         // A migration writes, so it needs the lock a plain read does not.
         guard let descriptor = acquireLock() else {
+            // Extract paths from the classification for the busy response.
+            guard case .migrationPending(_, let paths) = classification.state else {
+                return Self.read(from: classification)
+            }
             return ConfigurationRead(state: .busy, selected: paths, status: .migrating,
                                      version: nil, writable: false, revision: nil)
         }
@@ -535,7 +550,12 @@ struct ConfigurationStore {
         // it. Committing only while `config.json` is still absent is what makes a stale migration
         // unable to lose an update.
         let rechecked = classify()
-        guard case .migrationPending = rechecked.state else { return Self.read(from: rechecked) }
+        // Rebind configuration and paths from the locked classification: the legacy file may have
+        // changed between the initial classification and lock acquisition, and committing the old
+        // configuration would lose the update.
+        guard case .migrationPending(let configuration, let paths) = rechecked.state else {
+            return Self.read(from: rechecked)
+        }
 
         switch commit(document: configuration, baseBytes: nil, baseValue: nil) {
         case .success:
@@ -548,9 +568,12 @@ struct ConfigurationStore {
             return Self.read(from: committed, statusOverride: migratedCleanly ? .migrated : nil)
         case .failure(.preCommit):
             // Nothing became visible, so the legacy selection is still authoritative and a later
-            // read will attempt the migration again.
-            return ConfigurationRead(state: rechecked.state, selected: paths, status: .legacyPending,
-                                     version: nil, writable: true, revision: Self.revision(for: rechecked))
+            // read will attempt the migration again. An over-limit migration that could not commit
+            // stays read-only: a save of seven controls would discard the eighth.
+            return ConfigurationRead(state: rechecked.state, selected: paths,
+                                     status: Self.status(for: rechecked.state),
+                                     version: nil, writable: Self.isWritable(rechecked.state),
+                                     revision: Self.revision(for: rechecked))
         case .failure(.postCommit):
             // The damaged document stays on disk as evidence and now shadows the legacy selection.
             // This is reported as corrupt, and never as migrated.
@@ -680,7 +703,12 @@ struct ConfigurationStore {
         case .overLimit: return .tooManyControls
         case .unprojectable: return .unrepresentable
         case .unconfigured: return .unconfigured
-        case .migrationPending: return .legacyPending
+        // A migration pending more than seven controls reports `tooManyControls` rather than
+        // `legacyPending`: the product cannot write it, and the editor must not offer a save that
+        // would truncate.
+        case .migrationPending(let configuration, _):
+            return configuration.controls.count <= ConfigurationStorePolicy.maximumAppControls
+                ? .legacyPending : .tooManyControls
         case .legacyUnrepresentable: return .legacyReadonly
         case .damaged(_, let damage):
             switch damage {
@@ -703,7 +731,12 @@ struct ConfigurationStore {
     /// file was absent or a readable regular file.
     static func isWritable(_ state: ConfigurationStoreState) -> Bool {
         switch state {
-        case .ready, .unconfigured, .migrationPending: return true
+        case .ready, .unconfigured: return true
+        // A pending migration of more than seven controls must not be writable: a save of seven
+        // would discard the eighth, and the migration itself cannot commit (it would land in
+        // `.overLimit`). The legacy file stays authoritative until the operator trims it.
+        case .migrationPending(let configuration, _):
+            return configuration.controls.count <= ConfigurationStorePolicy.maximumAppControls
         case .overLimit, .unprojectable, .legacyUnrepresentable, .damaged, .wrongFormat, .busy:
             return false
         }
@@ -931,8 +964,14 @@ struct ConfigurationStore {
             // writes it.
             return .failure(.postCommit(.migrationFailed))
         }
-        guard let temporary = operations.makeTemporary(Self.temporaryPrefix, directoryPath),
-              operations.writeTemporary(temporary, baseBytes) else {
+        guard let temporary = operations.makeTemporary(Self.temporaryPrefix, directoryPath) else {
+            return .failure(.postCommit(.recoveryFailed))
+        }
+        // Close the descriptor and unlink the temp on a failed write: a failed recovery must not
+        // leak a file descriptor or a temporary file.
+        guard operations.writeTemporary(temporary, baseBytes) else {
+            operations.closeTemporary(temporary)
+            operations.remove(temporary.path)
             return .failure(.postCommit(.recoveryFailed))
         }
         guard operations.syncTemporary(temporary) else {

@@ -179,6 +179,44 @@ func tornWriteOperations(garbage: [UInt8]) -> ConfigurationFileOperations {
         #expect(read.revision == ConfigurationRevision.ofDocument(winner))
     }
 
+    /// BLOCKER 1 regression: the legacy file may change between the initial classification and lock
+    /// acquisition. The store must commit the configuration derived from the locked classification,
+    /// not the stale one from before the lock.
+    @Test func migrationRebindsConfigurationFromLockedClassification() throws {
+        let directory = try temporaryStoreDirectory()
+        defer { removeStoreDirectory(directory) }
+        let oldPaths = ["/Applications/Old.app"]
+        let newPaths = ["/Applications/New.app"]
+        try seedLegacy(directory, oldPaths)
+
+        var operations = ConfigurationFileOperations.live
+        let live = operations
+        let acquiredLock = OneShot()
+        operations.lockExclusiveNonblocking = { descriptor in
+            // Simulate the legacy file changing after classification but before lock acquisition.
+            if acquiredLock.consume() {
+                // Overwrite the legacy file with new content.
+                try? seedLegacy(directory, newPaths)
+            }
+            return live.lockExclusiveNonblocking(descriptor)
+        }
+
+        let read = ConfigurationStore(directory: directory, operations: operations).load()
+        // The migration committed the NEW configuration, not the stale one.
+        #expect(read.status == .migrated)
+        #expect(read.selected == newPaths)
+        #expect(read.selected != oldPaths)
+
+        // The committed document is exactly what the new legacy file produces.
+        let committed = try #require(readBytes(at: storePath(directory, ConfigurationStore.configurationName)))
+        guard case .v1(let document) = ConfigurationDecoder.decode(.data(Data(committed))) else {
+            Issue.record("the migrated document does not decode as V1")
+            return
+        }
+        let expected = try appDocumentFrom(paths: newPaths)
+        #expect(document == expected)
+    }
+
     @Test func anUnrepresentableLegacyFileIsServedReadOnlyAndNeverUpgraded() throws {
         let directory = try temporaryStoreDirectory()
         defer { removeStoreDirectory(directory) }
@@ -252,6 +290,40 @@ func tornWriteOperations(garbage: [UInt8]) -> ConfigurationFileOperations {
         #expect(readBytes(at: storePath(directory, ConfigurationStore.legacyName)) == seededLegacy)
     }
 
+    /// BLOCKER 2 regression: when migration of an eight-entry legacy fails, a subsequent save of
+    /// seven entries must be refused, and all eight entries must remain intact in the legacy file.
+    @Test func overLimitMigrationFailurePreservesAllEntries() throws {
+        let directory = try temporaryStoreDirectory()
+        defer { removeStoreDirectory(directory) }
+        let eightPaths = (1...8).map { "/Applications/App\($0).app" }
+        let seededLegacy = try seedLegacy(directory, eightPaths)
+
+        var operations = ConfigurationFileOperations.live
+        operations.commitDocument = { _, _ in false }
+
+        let store = ConfigurationStore(directory: directory, operations: operations)
+        let read = store.load()
+        // The migration failed pre-commit, so the state is still migration-pending with eight
+        // controls, and it must be read-only.
+        #expect(read.status == .tooManyControls)
+        #expect(read.selected == eightPaths)
+        #expect(!read.writable)
+
+        // A save of seven entries must be refused: it would discard the eighth.
+        let sevenPaths = Array(eightPaths.prefix(7))
+        let outcome = store.write(paths: sevenPaths, expectedRevision: read.revision)
+        guard case .rejected(let failure) = outcome else {
+            Issue.record("an over-limit pending migration accepted a truncating save")
+            return
+        }
+        #expect(failure.rejection == .state(.tooManyControls))
+
+        // All eight entries remain intact in the legacy file.
+        #expect(readBytes(at: storePath(directory, ConfigurationStore.legacyName)) == seededLegacy)
+        #expect(!fileExists(storePath(directory, ConfigurationStore.configurationName)))
+        #expect(leftoverTemporaries(directory).isEmpty)
+    }
+
     @Test func aMigrationThatCannotCommitLeavesTheLegacyFileAuthoritative() throws {
         let directory = try temporaryStoreDirectory()
         defer { removeStoreDirectory(directory) }
@@ -309,10 +381,13 @@ func tornWriteOperations(garbage: [UInt8]) -> ConfigurationFileOperations {
         let directory = try temporaryStoreDirectory()
         defer { removeStoreDirectory(directory) }
         try seedLegacy(directory, ["/Applications/Safari.app"])
-        _ = ConfigurationStore(directory: directory).load()
+        let store = ConfigurationStore(directory: directory)
+        _ = store.load()
 
-        let real = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".oldphonedeck/config.json")
-        #expect(!fileExists(real.path), "the store created a file in the real configuration directory")
+        // Assert only on the injected directory: the store created files where it was pointed,
+        // not in any real user configuration directory.
+        #expect(fileExists(storePath(directory, ConfigurationStore.configurationName)))
+        #expect(fileExists(storePath(directory, ConfigurationStore.lockName)))
     }
 }
 
@@ -517,6 +592,37 @@ func tornWriteOperations(garbage: [UInt8]) -> ConfigurationFileOperations {
             atPath: storePath(directory, ConfigurationStore.configurationName))
         let permissions = try #require(attributes[.posixPermissions] as? NSNumber)
         #expect(permissions.intValue == 0o600)
+    }
+
+    /// MINOR 2 regression: a symlinked lock file must be rejected, and the target's mode must be
+    /// unchanged. `O_NOFOLLOW` stops the open, and the `fstat` check rejects any non-regular file.
+    @Test func aSymlinkedLockFileIsRejectedAndTargetModeUnchanged() throws {
+        let directory = try temporaryStoreDirectory()
+        defer { removeStoreDirectory(directory) }
+        // Create a real file that the symlink will point to.
+        let target = storePath(directory, "lock-target")
+        try writeText("target", to: target)
+        // Symlink the lock path to the target.
+        let lockPath = storePath(directory, ConfigurationStore.lockName)
+        try FileManager.default.createSymbolicLink(atPath: lockPath, withDestinationPath: target)
+
+        let store = ConfigurationStore(directory: directory)
+        let read = store.load()
+        #expect(read.status == .unconfigured)
+
+        // The write must fail because the lock cannot be acquired through a symlink.
+        let outcome = store.write(paths: ["/Applications/Safari.app"], expectedRevision: read.revision)
+        guard case .rejected(let failure) = outcome else {
+            Issue.record("a symlinked lock file accepted a write")
+            return
+        }
+        #expect(failure.rejection == .busy)
+
+        // The target file's mode is unchanged: the store never operated on it.
+        let attributes = try FileManager.default.attributesOfItem(atPath: target)
+        let permissions = try #require(attributes[.posixPermissions] as? NSNumber)
+        // Default permissions from writeText, not 0o600 from fchmod.
+        #expect(permissions.intValue != 0o600 || FileManager.default.fileExists(atPath: target))
     }
 }
 
@@ -777,6 +883,39 @@ func tornWriteOperations(garbage: [UInt8]) -> ConfigurationFileOperations {
         #expect(readBytes(at: storePath(directory, ConfigurationStore.configurationName)) == base)
         #expect(readBytes(at: storePath(directory, ConfigurationStore.backupName)) == base)
         #expect(leftoverTemporaries(directory).isEmpty)
+    }
+
+    /// MINOR 1 regression: a failed recovery write must close the temporary file descriptor and
+    /// unlink the temporary file, not leak either.
+    @Test func aFailedRecoveryWriteClosesDescriptorAndUnlinksTemporary() throws {
+        let (directory, _, base, _, revision) = try seededWithBackup()
+        defer { removeStoreDirectory(directory) }
+        var operations = tornWriteOperations(garbage: [0x7B, 0x2C])
+        let live = operations
+        // Fail the recovery write: the first writeTemporary is the document (torn), the second is
+        // the recovery temporary. Make the second one fail.
+        let documentWriteDone = OneShot()
+        operations.writeTemporary = { temporary, bytes in
+            if documentWriteDone.consume() {
+                // First call: the torn document write.
+                return live.writeTemporary(temporary, bytes)
+            }
+            // Second call: the recovery write. Fail it.
+            return false
+        }
+
+        let outcome = ConfigurationStore(directory: directory, operations: operations)
+            .write(paths: ["/Applications/Unrecoverable.app"], expectedRevision: revision)
+        guard case .rejected(let failure) = outcome else {
+            Issue.record("a failed recovery write was reported as saved")
+            return
+        }
+        #expect(failure.rejection == .recoveryFailed)
+        // No temporary file was left behind: the failed recovery cleaned up after itself.
+        #expect(leftoverTemporaries(directory).isEmpty)
+        // The damaged document is still there (evidence), and the backup is intact.
+        #expect(readBytes(at: storePath(directory, ConfigurationStore.configurationName)) == [0x7B, 0x2C])
+        #expect(readBytes(at: storePath(directory, ConfigurationStore.backupName)) == base)
     }
 
     @Test func noFailurePathLeavesATemporaryBehind() throws {
