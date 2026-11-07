@@ -63,7 +63,12 @@ enum Apps {
 /// Which apps the phone launcher shows, in order. Stored on the Mac so Safari and the
 /// home-screen app (which have separate storage on iOS) see the same list.
 enum Launcher {
-    static let file = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".oldphonedeck/launcher.json")
+    /// `launcher.json` inside the configuration directory. `use(configDir:)` redirects it for
+    /// `--config-dir`; the default is the production `~/.oldphonedeck/launcher.json`, unchanged.
+    private(set) static var file = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".oldphonedeck/launcher.json")
+
+    /// Points the launcher configuration at `launcher.json` inside the given configuration directory.
+    static func use(configDir: URL) { file = configDir.appendingPathComponent("launcher.json") }
 
     /// nil = never configured (phone shows everything and suggests editing).
     static func selected() -> [String]? {

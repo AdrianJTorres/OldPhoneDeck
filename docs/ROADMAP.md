@@ -279,8 +279,9 @@ M2.5 — Storage Integration & Migration Cutover: **IN PROGRESS**. Design approv
 recorded as **ADR-016** (accepted 2026-11-07), which elaborates ADR-007 and ADR-015 without
 superseding either. The consolidated design is `docs/M2.5-DESIGN.md`; the drafting record is
 `docs/M2.5-ADR-016-DRAFT.md`. The milestone is split into slices S1, S1b, S2–S7 (§13 of the design);
-**only S1 has been implemented**, on `m2.5/s1-configuration-store`, and it is **pending independent
-Codex review and Steering acceptance**. S1b through S7 are **NOT STARTED**.
+**S1 and S1b are implemented and ACCEPTED by Steering (2026-11-07)** on
+`m2.5/s1-configuration-store`. **S2 (`--config-dir`) is implemented** on the same branch, pending
+independent review and Steering acceptance. S3 through S7 are **NOT STARTED**.
 
 S1 adds `Sources/oldphonedeck/ConfigurationStore.swift`: the storage layer that gives the M2.4 codec
 a file to live in, and the only file this slice adds to `Sources/`. It is **unwired** —
@@ -343,7 +344,8 @@ M2 overall remains **IN PROGRESS**.
 
 M2 is **not complete**. M2.1, M2.2, M2.3 and M2.4 are accepted; the Action Registry currently
 supports only app launch, and versioned configuration exists as an unwired, accepted codec plus an
-unwired, unreviewed storage layer — the read-path cutover is M2.5's S1b–S7.
+unwired, accepted storage layer with an extracted launcher handler — the read-path cutover is
+M2.5's S3–S7.
 M5 remains the independent security/reliability review. Physical iPhone 11 checks passed
 for WSS streaming, camera frames reaching the Mac, fresh-frame delivery, front/back
 switching, reconnection and deck polling. Continuous live MJPEG was not confirmed on
