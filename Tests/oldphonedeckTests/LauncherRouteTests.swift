@@ -118,187 +118,130 @@ import Testing
 
 // MARK: - Handler integration
 
-/// A minimal HTTPConnection recorder for testing the handler without a real network connection.
-final class MockHTTPConnection {
-    var status: Int?
-    var body: String?
-    var json: [String: Any]?
+import Network
 
-    func respond(_ status: Int, text: String) {
-        self.status = status
-        self.body = text
+@Suite(.serialized)
+struct LauncherRouteHandlerTests {
+    private let token = "launcher-test-token"
+
+    private func startServer(selected: [String]?,
+                             saver: @escaping ([String]) throws -> Int,
+                             catalog: @escaping () -> [[String: String]] = { [] }) throws -> (HTTPServer, NWEndpoint.Port) {
+        let server = try HTTPServer(port: 0, queue: DispatchQueue(label: "launcher-route-test"),
+                                    budget: HTTPConnectionBudget())
+        server.start(admission: { DeckRoute.admit($0, token: self.token) }) { req, conn in
+            guard let route = DeckRoute.match(method: req.method, path: req.path), route == .launcherRead else {
+                return conn.respond(404, text: "not found")
+            }
+            LauncherRoute.handle(req, loader: { selected }, saver: saver, on: conn, catalog: catalog)
+        }
+        try #require(resourceEventually { (server.port?.rawValue ?? 0) > 0 })
+        return (server, try #require(server.port))
     }
 
-    func respondJSON(_ obj: Any) {
-        self.status = 200
-        self.json = obj as? [String: Any]
+    private func get(port: NWEndpoint.Port) throws -> String {
+        let client = ResourceTestClient(port: port)
+        defer { client.cancel() }
+        client.send("GET /launcher?k=\(token) HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+        try #require(resourceEventually { client.isClosed && !client.text.isEmpty })
+        return client.text
     }
-}
 
-@Suite struct LauncherRouteHandlerTests {
+    private func post(port: NWEndpoint.Port, body: String) throws -> String {
+        let client = ResourceTestClient(port: port)
+        defer { client.cancel() }
+        client.send("POST /launcher?k=\(token) HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                    + "Content-Type: application/x-www-form-urlencoded\r\nContent-Length: \(body.utf8.count)\r\n\r\n"
+                    + body)
+        try #require(resourceEventually { client.isClosed && !client.text.isEmpty })
+        return client.text
+    }
+
     @Test func getReturnsSelectedAndAll() throws {
-        let request = HTTPRequest(method: "GET", path: "/launcher", query: [:], headers: [:], body: Data())
-        let mock = MockHTTPConnection()
+        let catalog = { [["name": "Safari", "path": "/Applications/Safari.app"]] }
+        let (server, port) = try startServer(selected: ["/Applications/Safari.app"], saver: { _ in 0 }, catalog: catalog)
+        defer { server.stop() }
 
-        LauncherRoute.handle(
-            request,
-            loader: { ["/Applications/Safari.app"] },
-            saver: { _ in throw NSError(domain: "test", code: 1) },
-            on: mock
-        )
-
-        #expect(mock.status == 200)
-        #expect(mock.json?["selected"] as? [String] == ["/Applications/Safari.app"])
-        #expect(mock.json?["all"] != nil)
+        let response = try get(port: port)
+        #expect(response.hasPrefix("HTTP/1.1 200 OK\r\n"))
+        #expect(response.contains("\"selected\":[\"\/Applications\/Safari.app\"]"))
+        #expect(response.contains("\"all\":[{\"name\":\"Safari\",\"path\":\"\/Applications\/Safari.app\"}]"))
     }
 
     @Test func getWithNilSelectedReturnsNull() throws {
-        let request = HTTPRequest(method: "GET", path: "/launcher", query: [:], headers: [:], body: Data())
-        let mock = MockHTTPConnection()
+        let catalog = { [["name": "Safari", "path": "/Applications/Safari.app"]] }
+        let (server, port) = try startServer(selected: nil, saver: { _ in 0 }, catalog: catalog)
+        defer { server.stop() }
 
-        LauncherRoute.handle(
-            request,
-            loader: { nil },
-            saver: { _ in throw NSError(domain: "test", code: 1) },
-            on: mock
-        )
-
-        #expect(mock.status == 200)
-        #expect(mock.json?["selected"] is NSNull)
+        let response = try get(port: port)
+        #expect(response.hasPrefix("HTTP/1.1 200 OK\r\n"))
+        #expect(response.contains("\"selected\":null"))
     }
 
     @Test func postWithValidPathsReturnsSavedCount() throws {
-        let body = "n=2&paths=/Applications/Safari.app\n/Applications/Xcode.app"
-        let request = HTTPRequest(
-            method: "POST",
-            path: "/launcher",
-            query: [:],
-            headers: ["content-type": "application/x-www-form-urlencoded"],
-            body: Data(body.utf8)
-        )
-        let mock = MockHTTPConnection()
         var savedPaths: [String]?
-        LauncherRoute.handle(
-            request,
-            loader: { savedPaths ?? [] },
-            saver: { paths in savedPaths = paths; return paths.count },
-            on: mock
-        )
+        let saver: ([String]) throws -> Int = { paths in savedPaths = paths; return paths.count }
+        let (server, port) = try startServer(selected: [], saver: saver)
+        defer { server.stop() }
 
-        #expect(mock.status == 200)
-        #expect(mock.json?["saved"] as? Int == 2)
+        let body = "n=2&paths=/Applications/Safari.app\n/Applications/Xcode.app"
+        let response = try post(port: port, body: body)
+        #expect(response.hasPrefix("HTTP/1.1 200 OK\r\n"))
+        #expect(response.contains("\"saved\":2"))
         #expect(savedPaths == ["/Applications/Safari.app", "/Applications/Xcode.app"])
     }
 
     @Test func postWithInvalidCountReturns400() throws {
+        let (server, port) = try startServer(selected: [], saver: { _ in 0 })
+        defer { server.stop() }
+
         let body = "n=8&paths=/Applications/Safari.app"
-        let request = HTTPRequest(
-            method: "POST",
-            path: "/launcher",
-            query: [:],
-            headers: ["content-type": "application/x-www-form-urlencoded"],
-            body: Data(body.utf8)
-        )
-        let mock = MockHTTPConnection()
-
-        LauncherRoute.handle(
-            request,
-            loader: { [] },
-            saver: { _ in 0 },
-            on: mock
-        )
-
-        #expect(mock.status == 400)
-        #expect(mock.body == "invalid-count")
+        let response = try post(port: port, body: body)
+        #expect(response.hasPrefix("HTTP/1.1 400 Bad Request\r\n"))
+        #expect(response.hasSuffix("\r\n\r\ninvalid-count"))
     }
 
     @Test func postWithCountMismatchReturns400() throws {
+        let (server, port) = try startServer(selected: [], saver: { _ in 0 })
+        defer { server.stop() }
+
         let body = "n=2&paths=/Applications/Safari.app"
-        let request = HTTPRequest(
-            method: "POST",
-            path: "/launcher",
-            query: [:],
-            headers: ["content-type": "application/x-www-form-urlencoded"],
-            body: Data(body.utf8)
-        )
-        let mock = MockHTTPConnection()
-
-        LauncherRoute.handle(
-            request,
-            loader: { [] },
-            saver: { _ in 0 },
-            on: mock
-        )
-
-        #expect(mock.status == 400)
-        #expect(mock.body == "count-mismatch")
+        let response = try post(port: port, body: body)
+        #expect(response.hasPrefix("HTTP/1.1 400 Bad Request\r\n"))
+        #expect(response.hasSuffix("\r\n\r\ncount-mismatch"))
     }
 
     @Test func postWithEntryTooLongReturns400() throws {
+        let (server, port) = try startServer(selected: [], saver: { _ in 0 })
+        defer { server.stop() }
+
         let longPath = String(repeating: "a", count: ConfigurationStorePolicy.maximumEntryBytes + 1)
         let body = "n=1&paths=\(longPath)"
-        let request = HTTPRequest(
-            method: "POST",
-            path: "/launcher",
-            query: [:],
-            headers: ["content-type": "application/x-www-form-urlencoded"],
-            body: Data(body.utf8)
-        )
-        let mock = MockHTTPConnection()
-
-        LauncherRoute.handle(
-            request,
-            loader: { [] },
-            saver: { _ in 0 },
-            on: mock
-        )
-
-        #expect(mock.status == 400)
-        #expect(mock.body == "entry-too-long")
+        let response = try post(port: port, body: body)
+        #expect(response.hasPrefix("HTTP/1.1 400 Bad Request\r\n"))
+        #expect(response.hasSuffix("\r\n\r\nentry-too-long"))
     }
 
     @Test func postWithSaveErrorReturns500() throws {
+        let (server, port) = try startServer(selected: [], saver: { _ in throw NSError(domain: "test", code: 1) })
+        defer { server.stop() }
+
         let body = "n=1&paths=/Applications/Safari.app"
-        let request = HTTPRequest(
-            method: "POST",
-            path: "/launcher",
-            query: [:],
-            headers: ["content-type": "application/x-www-form-urlencoded"],
-            body: Data(body.utf8)
-        )
-        let mock = MockHTTPConnection()
-
-        LauncherRoute.handle(
-            request,
-            loader: { [] },
-            saver: { _ in throw NSError(domain: "test", code: 1) },
-            on: mock
-        )
-
-        #expect(mock.status == 500)
-        #expect(mock.body == "write-failed")
+        let response = try post(port: port, body: body)
+        #expect(response.hasPrefix("HTTP/1.1 500 Internal Server Error\r\n"))
+        #expect(response.hasSuffix("\r\n\r\nwrite-failed"))
     }
 
     @Test func postWithLegacyBranchPreservesEmptyPaths() throws {
         // No `n` parameter: legacy branch, empty subsequences omitted.
-        let body = "paths=/Applications/Safari.app\n\n/Applications/Xcode.app"
-        let request = HTTPRequest(
-            method: "POST",
-            path: "/launcher",
-            query: [:],
-            headers: ["content-type": "application/x-www-form-urlencoded"],
-            body: Data(body.utf8)
-        )
-        let mock = MockHTTPConnection()
         var savedPaths: [String]?
-        LauncherRoute.handle(
-            request,
-            loader: { savedPaths ?? [] },
-            saver: { paths in savedPaths = paths; return paths.count },
-            on: mock
-        )
+        let saver: ([String]) throws -> Int = { paths in savedPaths = paths; return paths.count }
+        let (server, port) = try startServer(selected: [], saver: saver)
+        defer { server.stop() }
 
-        #expect(mock.status == 200)
+        let body = "paths=/Applications/Safari.app\n\n/Applications/Xcode.app"
+        let response = try post(port: port, body: body)
+        #expect(response.hasPrefix("HTTP/1.1 200 OK\r\n"))
         // Legacy branch omits empty subsequences, so the middle empty is dropped.
         #expect(savedPaths == ["/Applications/Safari.app", "/Applications/Xcode.app"])
     }

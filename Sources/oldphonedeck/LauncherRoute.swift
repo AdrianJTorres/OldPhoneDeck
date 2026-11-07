@@ -71,7 +71,8 @@ enum LauncherRoute {
         _ request: HTTPRequest,
         loader: @escaping () -> [String]?,
         saver: @escaping ([String]) throws -> Int,
-        on connection: HTTPConnection
+        on connection: HTTPConnection,
+        catalog: @escaping () -> [[String: String]] = Apps.list
     ) {
         // Validation is repeated here rather than trusted to the route switch's generic pass.
         if let failure = DeckRoute.validateParameters(request) {
@@ -83,7 +84,7 @@ enum LauncherRoute {
         switch request.method {
         case "GET":
             let selected: Any = loader() ?? NSNull()
-            connection.respondJSON(["selected": selected, "all": Apps.list()])
+            connection.respondJSON(["selected": selected, "all": catalog()])
 
         case "POST":
             // S1b: validate n/paths, but delegate to the legacy saver. The `expected` parameter
@@ -96,7 +97,7 @@ enum LauncherRoute {
                     // does not include `configuration`, `writable`, or `revision` (those come from
                     // ConfigurationStore). The client tolerates their absence.
                     let selected: Any = loader() ?? NSNull()
-                    connection.respondJSON(["selected": selected, "all": Apps.list(), "saved": saved])
+                    connection.respondJSON(["selected": selected, "all": catalog(), "saved": saved])
                 } catch {
                     connection.respond(500, text: "write-failed")
                 }
