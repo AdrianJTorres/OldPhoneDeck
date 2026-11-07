@@ -124,7 +124,34 @@ import Network
 struct LauncherRouteHandlerTests {
     private let token = "launcher-test-token"
 
-    private func startServer(selected: [String]?,
+    /// Per-test storage shared by the injected loader and saver, with observable auth side effects.
+    private final class SelectionState {
+        private let lock = NSLock()
+        private var selection: [String]?
+        private var loads = 0
+        private var saves = 0
+
+        init(_ selection: [String]?) { self.selection = selection }
+
+        func load() -> [String]? {
+            lock.lock(); defer { lock.unlock() }
+            loads += 1
+            return selection
+        }
+
+        func save(_ paths: [String]) -> Int {
+            lock.lock(); defer { lock.unlock() }
+            saves += 1
+            selection = paths
+            return paths.count
+        }
+
+        var paths: [String]? { lock.lock(); defer { lock.unlock() }; return selection }
+        var loadCount: Int { lock.lock(); defer { lock.unlock() }; return loads }
+        var saveCount: Int { lock.lock(); defer { lock.unlock() }; return saves }
+    }
+
+    private func startServer(loader: @escaping () -> [String]?,
                              saver: @escaping ([String]) throws -> Int,
                              catalog: @escaping () -> [[String: String]] = { [] }) throws -> (HTTPServer, NWEndpoint.Port) {
         let server = try HTTPServer(port: 0, queue: DispatchQueue(label: "launcher-route-test"),
@@ -134,66 +161,83 @@ struct LauncherRouteHandlerTests {
                   route == .launcherRead || route == .launcherSave else {
                 return conn.respond(404, text: "not found")
             }
-            LauncherRoute.handle(req, loader: { selected }, saver: saver, on: conn, catalog: catalog)
+            LauncherRoute.handle(req, loader: loader, saver: saver, on: conn, catalog: catalog)
         }
         try #require(resourceEventually { (server.port?.rawValue ?? 0) > 0 })
         return (server, try #require(server.port))
     }
 
-    private func get(port: NWEndpoint.Port) throws -> String {
+    private func get(port: NWEndpoint.Port, target: String? = nil) throws -> String {
         let client = ResourceTestClient(port: port)
         defer { client.cancel() }
-        client.send("GET /launcher?k=\(token) HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+        let requestTarget = target ?? "/launcher?k=\(token)"
+        client.send("GET \(requestTarget) HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
         try #require(resourceEventually { client.isClosed && !client.text.isEmpty })
         return client.text
     }
 
-    private func post(port: NWEndpoint.Port, body: String) throws -> String {
+    private func post(port: NWEndpoint.Port, target: String? = nil, body: String) throws -> String {
         let client = ResourceTestClient(port: port)
         defer { client.cancel() }
-        client.send("POST /launcher?k=\(token) HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+        let requestTarget = target ?? "/launcher?k=\(token)"
+        client.send("POST \(requestTarget) HTTP/1.1\r\nHost: 127.0.0.1\r\n"
                     + "Content-Type: application/x-www-form-urlencoded\r\nContent-Length: \(body.utf8.count)\r\n\r\n"
                     + body)
         try #require(resourceEventually { client.isClosed && !client.text.isEmpty })
         return client.text
     }
 
+    private func jsonBody(_ response: String) throws -> [String: Any] {
+        let separator = try #require(response.range(of: "\r\n\r\n"))
+        #expect(response[..<separator.lowerBound].contains("Content-Type: application/json\r\n"))
+        let data = Data(response[separator.upperBound...].utf8)
+        return try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+    }
+
     @Test func getReturnsSelectedAndAll() throws {
         let catalog = { [["name": "Safari", "path": "/Applications/Safari.app"]] }
-        let (server, port) = try startServer(selected: ["/Applications/Safari.app"], saver: { _ in 0 }, catalog: catalog)
+        let (server, port) = try startServer(loader: { ["/Applications/Safari.app"] }, saver: { _ in 0 }, catalog: catalog)
         defer { server.stop() }
 
         let response = try get(port: port)
         #expect(response.hasPrefix("HTTP/1.1 200 OK\r\n"))
-        #expect(response.contains("\"selected\":[\"/Applications/Safari.app\"]"))
-        #expect(response.contains("\"all\":[{\"name\":\"Safari\",\"path\":\"/Applications/Safari.app\"}]"))
+        let json = try jsonBody(response)
+        #expect(json["selected"] as? [String] == ["/Applications/Safari.app"])
+        #expect(json["all"] as? [[String: String]] == catalog())
     }
 
     @Test func getWithNilSelectedReturnsNull() throws {
         let catalog = { [["name": "Safari", "path": "/Applications/Safari.app"]] }
-        let (server, port) = try startServer(selected: nil, saver: { _ in 0 }, catalog: catalog)
+        let (server, port) = try startServer(loader: { nil }, saver: { _ in 0 }, catalog: catalog)
         defer { server.stop() }
 
         let response = try get(port: port)
         #expect(response.hasPrefix("HTTP/1.1 200 OK\r\n"))
-        #expect(response.contains("\"selected\":null"))
+        let json = try jsonBody(response)
+        #expect(json["selected"] is NSNull)
+        #expect(json["all"] as? [[String: String]] == catalog())
     }
 
     @Test func postWithValidPathsReturnsSavedCount() throws {
-        var savedPaths: [String]?
-        let saver: ([String]) throws -> Int = { paths in savedPaths = paths; return paths.count }
-        let (server, port) = try startServer(selected: [], saver: saver)
+        let state = SelectionState(["/Applications/Old.app"])
+        let catalog = { [["name": "Safari", "path": "/Applications/Safari.app"]] }
+        let (server, port) = try startServer(loader: state.load, saver: state.save, catalog: catalog)
         defer { server.stop() }
 
         let body = "n=2&paths=/Applications/Safari.app\n/Applications/Xcode.app"
         let response = try post(port: port, body: body)
         #expect(response.hasPrefix("HTTP/1.1 200 OK\r\n"))
-        #expect(response.contains("\"saved\":2"))
-        #expect(savedPaths == ["/Applications/Safari.app", "/Applications/Xcode.app"])
+        let expected = ["/Applications/Safari.app", "/Applications/Xcode.app"]
+        let json = try jsonBody(response)
+        #expect(json["saved"] as? Int == 2)
+        #expect(json["selected"] as? [String] == expected)
+        #expect(json["all"] as? [[String: String]] == catalog())
+        #expect(state.paths == expected)
+        #expect(state.saveCount == 1)
     }
 
     @Test func postWithInvalidCountReturns400() throws {
-        let (server, port) = try startServer(selected: [], saver: { _ in 0 })
+        let (server, port) = try startServer(loader: { [] }, saver: { _ in 0 })
         defer { server.stop() }
 
         let body = "n=8&paths=/Applications/Safari.app"
@@ -203,7 +247,7 @@ struct LauncherRouteHandlerTests {
     }
 
     @Test func postWithCountMismatchReturns400() throws {
-        let (server, port) = try startServer(selected: [], saver: { _ in 0 })
+        let (server, port) = try startServer(loader: { [] }, saver: { _ in 0 })
         defer { server.stop() }
 
         let body = "n=2&paths=/Applications/Safari.app"
@@ -213,7 +257,7 @@ struct LauncherRouteHandlerTests {
     }
 
     @Test func postWithEntryTooLongReturns400() throws {
-        let (server, port) = try startServer(selected: [], saver: { _ in 0 })
+        let (server, port) = try startServer(loader: { [] }, saver: { _ in 0 })
         defer { server.stop() }
 
         let longPath = String(repeating: "a", count: ConfigurationStorePolicy.maximumEntryBytes + 1)
@@ -224,7 +268,7 @@ struct LauncherRouteHandlerTests {
     }
 
     @Test func postWithSaveErrorReturns500() throws {
-        let (server, port) = try startServer(selected: [], saver: { _ in throw NSError(domain: "test", code: 1) })
+        let (server, port) = try startServer(loader: { [] }, saver: { _ in throw NSError(domain: "test", code: 1) })
         defer { server.stop() }
 
         let body = "n=1&paths=/Applications/Safari.app"
@@ -235,15 +279,45 @@ struct LauncherRouteHandlerTests {
 
     @Test func postWithLegacyBranchPreservesEmptyPaths() throws {
         // No `n` parameter: legacy branch, empty subsequences omitted.
-        var savedPaths: [String]?
-        let saver: ([String]) throws -> Int = { paths in savedPaths = paths; return paths.count }
-        let (server, port) = try startServer(selected: [], saver: saver)
+        let state = SelectionState([])
+        let (server, port) = try startServer(loader: state.load, saver: state.save)
         defer { server.stop() }
 
         let body = "paths=/Applications/Safari.app\n\n/Applications/Xcode.app"
         let response = try post(port: port, body: body)
         #expect(response.hasPrefix("HTTP/1.1 200 OK\r\n"))
         // Legacy branch omits empty subsequences, so the middle empty is dropped.
-        #expect(savedPaths == ["/Applications/Safari.app", "/Applications/Xcode.app"])
+        let expected = ["/Applications/Safari.app", "/Applications/Xcode.app"]
+        let json = try jsonBody(response)
+        #expect(json["saved"] as? Int == 2)
+        #expect(json["selected"] as? [String] == expected)
+        #expect(json["all"] as? [[String: String]] == [])
+        #expect(state.paths == expected)
+        #expect(state.saveCount == 1)
+    }
+
+    @Test func authenticationIsRequiredBeforeReadingOrSaving() throws {
+        let original = ["/Applications/Original.app"]
+        let state = SelectionState(original)
+        let (server, port) = try startServer(loader: state.load, saver: state.save)
+        defer { server.stop() }
+
+        let body = "n=1&paths=/Applications/Changed.app"
+        for (target, status) in [
+            ("/launcher", "403 Forbidden"),
+            ("/launcher?k=wrong-token", "403 Forbidden"),
+            ("/launcher?k=\(token)&k=\(token)", "400 Bad Request"),
+        ] {
+            let readResponse = try get(port: port, target: target)
+            #expect(readResponse.hasPrefix("HTTP/1.1 \(status)\r\n"))
+            let saveResponse = try post(port: port, target: target, body: body)
+            #expect(saveResponse.hasPrefix("HTTP/1.1 \(status)\r\n"))
+        }
+        // A token in the body cannot substitute for query-token authentication.
+        let bodyToken = try post(port: port, target: "/launcher", body: "k=\(token)&" + body)
+        #expect(bodyToken.hasPrefix("HTTP/1.1 403 Forbidden\r\n"))
+        #expect(state.loadCount == 0)
+        #expect(state.saveCount == 0)
+        #expect(state.paths == original)
     }
 }
