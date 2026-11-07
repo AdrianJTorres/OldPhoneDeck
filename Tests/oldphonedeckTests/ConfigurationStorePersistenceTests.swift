@@ -196,7 +196,7 @@ func tornWriteOperations(garbage: [UInt8]) -> ConfigurationFileOperations {
             // Simulate the legacy file changing after classification but before lock acquisition.
             if acquiredLock.consume() {
                 // Overwrite the legacy file with new content.
-                try? seedLegacy(directory, newPaths)
+                _ = try? seedLegacy(directory, newPaths)
             }
             return live.lockExclusiveNonblocking(descriptor)
         }
@@ -621,8 +621,9 @@ func tornWriteOperations(garbage: [UInt8]) -> ConfigurationFileOperations {
         // The target file's mode is unchanged: the store never operated on it.
         let attributes = try FileManager.default.attributesOfItem(atPath: target)
         let permissions = try #require(attributes[.posixPermissions] as? NSNumber)
-        // Default permissions from writeText, not 0o600 from fchmod.
-        #expect(permissions.intValue != 0o600 || FileManager.default.fileExists(atPath: target))
+        // Default permissions from writeText, not 0o600 from fchmod. The store never reached
+        // the target because O_NOFOLLOW rejected the symlink.
+        #expect(permissions.intValue != 0o600)
     }
 }
 
@@ -903,6 +904,14 @@ func tornWriteOperations(garbage: [UInt8]) -> ConfigurationFileOperations {
             // Second call: the recovery write. Fail it.
             return false
         }
+        // Record closeTemporary calls to prove the descriptor was closed on the failed recovery.
+        let closeCount = NSLock()
+        var closes = 0
+        let liveClose = operations.closeTemporary
+        operations.closeTemporary = { temporary in
+            closeCount.lock(); closes += 1; closeCount.unlock()
+            liveClose(temporary)
+        }
 
         let outcome = ConfigurationStore(directory: directory, operations: operations)
             .write(paths: ["/Applications/Unrecoverable.app"], expectedRevision: revision)
@@ -911,6 +920,9 @@ func tornWriteOperations(garbage: [UInt8]) -> ConfigurationFileOperations {
             return
         }
         #expect(failure.rejection == .recoveryFailed)
+        // The recovery temporary's descriptor was closed: the failed write path did not leak it.
+        closeCount.lock(); let finalCloses = closes; closeCount.unlock()
+        #expect(finalCloses >= 2, "expected at least 2 closeTemporary calls (document + recovery)")
         // No temporary file was left behind: the failed recovery cleaned up after itself.
         #expect(leftoverTemporaries(directory).isEmpty)
         // The damaged document is still there (evidence), and the backup is intact.

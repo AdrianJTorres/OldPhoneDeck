@@ -139,14 +139,10 @@ let routes: (HTTPRequest, HTTPConnection) -> Void = { req, conn in
     case .artwork:
         guard let art = music.artwork() else { return conn.respond(404, text: "no artwork") }
         conn.respond(200, "image/jpeg", art)
-    case .launcherRead:
-        let selected: Any = Launcher.selected() ?? NSNull()
-        conn.respondJSON(["selected": selected, "all": Apps.list()])
-    case .launcherSave:
-        // Body: paths=<path>\n<path>\n… in display order.
-        let paths = (p["paths"] ?? "").split(separator: "\n").map(String.init)
-        do { conn.respondJSON(["saved": try Launcher.save(paths)]) }
-        catch { conn.respond(500, text: error.localizedDescription) }
+    case .launcherRead, .launcherSave:
+        // The same shared handler pattern as AppLaunchRoute: one entry point for GET and POST,
+        // validation re-run inside, and no caller can reach the store without the check.
+        LauncherRoute.handle(req, loader: Launcher.selected, saver: Launcher.save, on: conn)
     case .icon:
         let path = p["path"] ?? ""
         guard Apps.isKnown(path) else { return conn.respond(404, text: "unknown app") }
