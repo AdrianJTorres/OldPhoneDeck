@@ -559,3 +559,225 @@ format is proven on the physical device, and a binary downgraded after a V1 cuto
 otherwise read `nil` and show an empty deck. M3 owns `layout`, the V1→V2 migration and
 data-driven rendering. Adding an action stays a deliberate code change, not configuration.
 
+---
+
+## ADR-016 — Configuration storage: an authoritative V1 file beside a frozen legacy file
+
+**Status:** Accepted by Steering · 2026-11-07 · Target: M2.5. This **elaborates** ADR-007 and
+ADR-015 and supersedes neither; both remain accepted and unedited. ADR-015 decided what the V1
+document looks like. This record decides where it lives, when it may be replaced, and what happens
+when a replacement cannot be completed. The consolidated design behind it is
+`docs/M2.5-DESIGN.md`; the drafting record is `docs/M2.5-ADR-016-DRAFT.md`.
+
+**Context.** ADR-015 delivered a V1 codec that is deliberately unwired: `Launcher.selected()` still
+reads a bare array from `launcher.json` and returns one `nil` for an absent, an unreadable and an
+unparseable file alike, so the ARCHITECTURE §9 finding stays open. Four constraints shape the
+storage layer. Converting `launcher.json` in place is impossible: a pre-M2.5 binary casts it
+`as? [String]` (`Control.swift`), so a V1 object yields `nil` and a downgraded install silently
+shows an empty deck. Permanent dual-write is impossible: a bare array cannot express a title, a
+custom id or `.unmodeled` parameters. `NSHomeDirectory()` ignores `$HOME` on this macOS build, so
+storage cannot be isolated by environment and cannot be tested without an injected directory. And
+the ES5 client abandons a non-200 `GET /launcher` (`web/index.html`), so a degraded state answered
+with an error status renders as exactly the silent empty deck ADR-007 exists to remove.
+
+**Decision.** Storage is two files in one directory. `config.json` holds the V1 document and is
+authoritative. `launcher.json` is **frozen**: read-only, never written, never deleted, and
+consulted only when `config.json` is absent. Fourteen rules carry the weight.
+
+1. **Source-aware shapes.** `config.json` must contain a V1 object and `launcher.json` must contain
+   a legacy array. A well-formed document in the wrong file is `wrongFormat` — reported, never
+   adopted, never overwritten, never reinterpreted. Source-awareness is a store-level interpretation
+   layered over the unchanged codec, so `Configuration.swift` gains no lines.
+2. **Distinguishable outcomes replace one `nil`.** Ready, over-limit, unprojectable, unconfigured,
+   migration-pending, legacy-unrepresentable, damaged (malformed / unsupported-version / unreadable
+   / non-regular), wrong-format, corrupt and busy. A document that cannot be expressed as a path
+   list yields `selected: null`, never a partial projection.
+3. **A valid legacy file that cannot be migrated is served, not hidden.** Its selection is still
+   rendered; the state is read-only and writes are refused, because replacing a large legacy
+   selection with the seven keys the page could show would destroy preserved data, and because a
+   legacy write path would be a second writer.
+4. **Readers never lock; writers always do.** `rename(2)` gives atomic visibility, so a read needs
+   no coordination. Every write — including migration-on-read, which ADR-007 places on the read
+   path — holds one exclusive advisory lock on a separate `config.lock` file, whose inode survives
+   the target's replacement.
+5. **Migration is double-checked under the lock.** State is re-read after acquisition; a migration
+   commits only if `config.json` is still absent, and adopts the winner's document otherwise. A
+   stale migration can therefore never overwrite a concurrent save.
+6. **No write may block the shared HTTP queue.** The lock is non-blocking and never waited on:
+   contention returns `503` for a write and a read-only response for a migration, because that queue
+   also carries MJPEG delivery.
+7. **Lost updates are refused by an opaque revision token, not by comparing file bytes.**
+   `GET /launcher` publishes a `revision` fingerprinting the configuration *content* the client
+   observed, and `POST /launcher` must echo it as `expected`. The server recomputes it under the
+   exclusive lock and refuses a mismatch with `409 stale` and an absent token with
+   `400 missing-revision`. Comparing bytes across one request's own classification window is not
+   sufficient: the window that matters is the browser's, between its GET and its POST.
+8. **Three-phase commit.** Pre-commit validation is the writer's policy bounds plus
+   `ConfigurationEncoder.verifiedData`. Atomic replacement is a `mkstemp` temp in the target's own
+   directory, `fchmod 0600`, `fsync(fd)`, `rename`. **File-data synchronization is pre-commit and
+   fatal.** **Directory synchronization is post-commit and best-effort:** `fsync(dirfd)` is
+   attempted, any errno is swallowed, and a save is never failed for it, because macOS guarantees no
+   directory-`fsync` semantics and `F_FULLFSYNC` on a directory fd returns `EINVAL`. The behaviour is
+   measured on the target build rather than assumed. Post-commit verification re-reads, re-decodes
+   and requires equality with the intended value.
+9. **One retained generation, replaced safely.** A previous generation is retained as
+   `config.json.prev` by hard link — one directory entry, no data copy, safe precisely because writes
+   never mutate in place — with a copy fallback where `link(2)` is unsupported. **The replacement is
+   prepared under a temporary name and swapped in by `rename` before the commit, so an existing
+   backup remains visible and byte-intact until its successor exists; a backup is never unlinked
+   before the generation it will replace has been captured.** Recovery restores from the base bytes
+   captured under the lock, not from the backup, so it cannot restore a generation older than the one
+   the client's revision described. If restoration also fails, neither file is deleted. **An initial
+   migration has no previous generation: a failed verification is reported as `migration-failed`,
+   the damaged document is retained as evidence, the state becomes read-only, and it is never
+   reported as a successful migration.** Its recovery is the frozen `launcher.json`, byte-intact
+   precisely because migration never writes it — the only case in which the legacy file is a
+   recovery path.
+10. **Durability is `fsync`, not `F_FULLFSYNC`.** Atomic visibility and power-loss durability are
+    distinct claims: the rename guarantees the first, and `fsync(fd)` before it is what makes the
+    second as strong as macOS offers without forcing a device-cache flush on the serial HTTP queue.
+    An acknowledged save can still be lost on power failure, and the frozen `launcher.json` does not
+    recover any edit made after migration.
+11. **Preservation is not authorization.** The write path performs no `Apps.isKnown` filtering, so
+    an uninstalled app's path, an empty path and a duplicated path survive a save. Storage confers
+    nothing: `ActionRegistry.dispatch` re-validates and re-authorizes against the Mac's own catalog
+    on every launch, and `.unmodeled` parameters remain inconvertible. A save is refused outright
+    when `legacySelection` is `nil`, **or when the document holds more controls than the writer's
+    limit of seven**, because a path list cannot reproduce a document that has titles, custom ids or
+    unregistered actions, and because the ES5 editor truncates the selection to `APP_SLOTS` on load
+    and would silently discard every control past the seventh. **Such a document is served in full —
+    all N paths on the wire — and marked read-only; the client truncates for display only, and the
+    server never truncates on disk.**
+12. **The revision is a concurrency control, not an integrity control.** It is a 64-bit
+    non-cryptographic fingerprint, opaque to the client, identifying configuration *content* rather
+    than file bytes. Two consequences are intended: a whitespace-only hand edit does not invalidate
+    a client, and **migration does not invalidate a client either**, because the bytes a commit
+    writes are exactly `ConfigurationCanonicalForm.data(c)` — the same `Data` the pre-migration
+    fingerprint was taken over, since `verifiedData` returns it unchanged. A client holding the
+    access token can always obtain a fresh revision and write anything; the token exists to stop an
+    accidental stale overwrite, which is why cryptographic strength is not purchased with a new
+    framework dependency.
+13. **The request contract names its own length.** `POST /launcher` carries `n`, the selection
+    count, alongside `paths`, because `paths` alone cannot distinguish an empty selection from a
+    selection holding one empty path — both encode to `""`. For `n >= 1` agreement is structural:
+    splitting without omitting empty subsequences yields exactly `newlineCount + 1` elements, so
+    `n = 1` with an empty `paths` **is** the one-empty-path case and must be accepted. Only `n == 0`
+    needs its own rule. A disagreement between `n` and the parsed elements is a `400`, never a silent
+    truncation or padding. A request without `n` is parsed with the pre-M2.5 rule, so an old
+    client's behaviour is unchanged.
+14. **`POST /launcher` returns the `GET /launcher` shape.** One response shape for both methods,
+    plus `saved`, so the client replaces its state wholesale and the application catalog it renders
+    from cannot be dropped by a save; and plus `revision`, so a second edit needs no intervening
+    GET. Error bodies are single fixed lowercase tokens in the existing `text/plain` style of `ok`
+    and `unknown app`, drawn from the same server-authored table as the `configuration` field;
+    exactly one status-reason map entry, `409`, is added, and `412`/`428` are not introduced where
+    the existing vocabulary already represents the case.
+
+The writer enforces the product cap of seven application controls, which ADR-015 explicitly
+deferred to this milestone; the codec's 4096 remains a corruption guard. `GET /launcher` keeps
+returning `200` in every degraded state and adds `configuration`, `version`, `writable` and
+`revision`. A new `--config-dir` option redirects the token, the configuration files and `tls/`; it
+does not redirect the application catalog, and it is what makes storage acceptance-testable given
+`NSHomeDirectory()`'s behaviour. Reads use `O_NOFOLLOW` and `O_NONBLOCK` with an `fstat`
+regular-file check and a bounded read, so a symlink fails closed, a FIFO cannot block the shared
+queue, and an oversized file is rejected without being allocated. Temporary files come from
+`mkstemp`, are `fchmod`'d to `0600`, live in the target's own directory, are owned and unlinked by
+the process that created them, and are never swept by a startup glob that could delete a live
+instance's in-flight temp.
+
+**Consequences.** A downgrade after cutover restores the *pre-migration* selection, cannot see
+later edits, and is not prevented from rewriting `launcher.json`; that cost is disclosed, rehearsed
+in the cutover protocol, and accepted rather than mitigated, because mitigating it would mean
+writing `launcher.json` again.
+
+An already-loaded pre-M2.5 page can still read the deck but **can no longer save**: its POST
+carries no `expected` and is refused with `400 missing-revision`, failing loudly in a client that
+only ever showed "Save failed". One page reload, which `Cache-Control: no-store` guarantees fetches
+the new client, resolves it, and the cutover procedure includes that reload. This is the one
+user-visible regression M2.5 introduces, and it is a refusal rather than a loss.
+
+Removing the save-path filter narrows a defense-in-depth control recorded in ARCHITECTURE §9 — an
+inert path may now be stored — and is accepted because execution authorization is unchanged and is
+the control that matters. Populating `all` in the save response costs one catalog scan, which the
+save path already performed for the filter rule 11 removes, so the cost is net unchanged. The
+revision adds one canonical re-encode per configuration read, bounded by the 1 MiB cap.
+`config.json` is `0600` where `launcher.json` was `0644`. One retained generation means two
+consecutive failed saves can lose a good document. A crash between the backup swap and the commit
+leaves `.prev` duplicating `config.json`, and distinctness returns on the next successful write. A
+leaked temp file after a crash is inert garbage that no code path reads.
+
+Wiring the route requires extracting a shared `LauncherRoute.handle` from `main.swift`'s top-level
+closure, following the `AppLaunchRoute.handle` pattern M2.3 established, because top-level code is
+unreachable from a test target. M3 owns `layout`, the V1→V2 migration, data-driven rendering and
+the removal of the client's own `APP_SLOTS` constant.
+
+**Rejected alternatives.** Converting `launcher.json` in place. Permanent or conditional
+dual-write. Migrating at startup instead of on read (contradicts ADR-007, and makes a process's
+first act a disk mutation nobody requested). Adopting a well-formed document found in the wrong
+file (creates two sources of legacy truth with undefined precedence when both hold arrays). A
+revision field inside the V1 document (requires changing an accepted, closed codec, and ADR-015
+rule 1 rejects unknown keys). Comparing `config.json` bytes across the request's own lock window. A
+revision counter in a sidecar file (a second file to commit atomically, and it can desync). A
+cryptographic revision digest. `412`/`428` statuses where `409`/`400` already denote the cases. A
+JSON error body on a route whose every other error is plain text. Omitting `all` from the save
+response. Inferring the selection count from a mandatory trailing separator (a client that forgets
+the terminator silently loses its last entry, where `n` turns the same mistake into a `400`).
+Repeated `paths=` fields (`HTTPRequest.params` is a dictionary, so repeats collapse). Unlinking the
+old backup before creating the new one. Recovering from `.prev` rather than from the base captured
+under the lock. Committing before swapping the backup. Treating a failed directory `fsync` as a
+failed save. Serving a truncated selection for an over-limit document. PID-derived temp names and a
+glob-based startup sweep. Memoizing the document in memory (cross-process staleness the stateless
+read path does not otherwise have). Blocking on the lock. `F_FULLFSYNC` per save.
+
+---
+
+## Implementation note — ADR-016 / M2.5 S1
+
+**Status:** S1 implemented on `m2.5/s1-configuration-store`, **pending independent Codex review
+and Steering acceptance**. M2.5 as a whole remains IN PROGRESS; S1b through S7 are not started.
+
+S1 delivers `Sources/oldphonedeck/ConfigurationStore.swift` and nothing else. It is **unwired**:
+`main.swift`, `Control.swift`, `HTTPParsing.swift`, `HTTPServer.swift`, `web/index.html` and
+`Package.swift` are untouched, `Launcher.selected()` and `Launcher.save()` remain the runtime path,
+`Configuration.swift` gains no lines, and no endpoint or client behaviour has changed. No real user
+configuration was read or written; every test owns a temporary directory, which is the reason the
+store takes an injected directory rather than deriving one from `NSHomeDirectory()`.
+
+What exists: source-aware classification into ten states; bounded `O_NOFOLLOW | O_NONBLOCK` reads
+with an `fstat` regular-file check and a cap-plus-one byte limit; the canonical-content revision
+fingerprint; non-blocking `flock` on a separate `config.lock` held across the whole
+read-modify-write including a double-checked migration-on-read; the three-phase commit with the
+backup prepared under a temporary name and swapped in before the commit; recovery from the base
+bytes captured under the lock; and a per-step filesystem seam that makes every failure point
+injectable.
+
+Evidence at S1: **319 Swift Testing tests in 36 suites pass** (the 248 retained M2.1–M2.4 tests
+plus 71 new ones in 7 new suites), `swift build -c release` completes with **zero warnings**, and
+**eight gate mutations** — removing the seven-control writable gate, moving the backup swap after
+the commit, dropping the in-lock migration re-check, skipping post-commit verification, dropping
+`O_NOFOLLOW`, fingerprinting raw bytes instead of canonical content, accepting a missing revision,
+and accepting a stale revision — were each observed to turn the relevant tests red and were reverted
+from a backup verified byte-identical by SHA-256. One mutation in the first round was ineffective
+rather than caught: it removed a comparison that an earlier `guard let` already made unreachable,
+and was replaced by one that removes the gate where it actually is. **No physical-device acceptance
+is claimed or possible for S1** — no endpoint or client behaviour changed.
+
+Two findings surfaced while implementing, both recorded rather than worked around, because working
+around either would mean changing `Configuration.swift` or adding a second parser:
+
+- A legacy array with more entries than `ConfigurationDecoder.maximumControlCount` (4096) is
+  rejected by the codec's corruption guard **before** migration can run, so it reports `malformed`
+  with `selected: null` rather than `legacy-readonly` with its selection served. Rule 3's promise
+  therefore holds only for legacy files the decoder accepts. The reachable shapes of
+  `legacyUnrepresentable` are an entry longer than 4096 bytes and a canonical form over 1 MiB.
+- A legacy file with more than seven entries migrates faithfully and lands in `overLimit`, so it
+  becomes read-only immediately after migration. That is rule 11 working as intended, but it means
+  a hand-edited legacy selection above seven keys can be seen and used, and not edited, until it is
+  reduced by hand.
+
+Nonblocking documentation debt carried forward: `AGENTS.md` §2 still has no `Configuration.swift`
+row and now also needs one for `ConfigurationStore.swift`. That file is protected against agent
+edits in this workflow, so both rows need a human edit. `docs/ARCHITECTURE.md` §3 carries the
+equivalent rows.
+
+

@@ -275,11 +275,75 @@ across any of the four M2.4 commits; it is recorded here for a human edit. It do
 acceptance, because `docs/ARCHITECTURE.md` §3 (File and module map) carries the equivalent row and
 lists the codec's exported types.
 
-M2.5 remains **NOT STARTED** and unbriefed. M2 overall remains **IN PROGRESS**.
+M2.5 — Storage Integration & Migration Cutover: **IN PROGRESS**. Design approved by Steering and
+recorded as **ADR-016** (accepted 2026-11-07), which elaborates ADR-007 and ADR-015 without
+superseding either. The consolidated design is `docs/M2.5-DESIGN.md`; the drafting record is
+`docs/M2.5-ADR-016-DRAFT.md`. The milestone is split into slices S1, S1b, S2–S7 (§13 of the design);
+**only S1 has been implemented**, on `m2.5/s1-configuration-store`, and it is **pending independent
+Codex review and Steering acceptance**. S1b through S7 are **NOT STARTED**.
+
+S1 adds `Sources/oldphonedeck/ConfigurationStore.swift`: the storage layer that gives the M2.4 codec
+a file to live in, and the only file this slice adds to `Sources/`. It is **unwired** —
+`main.swift`, `Control.swift`, `HTTPParsing.swift`, `HTTPServer.swift`, `web/index.html` and
+`Package.swift` are untouched, `Launcher.selected()` and `Launcher.save()` remain the runtime path,
+`Configuration.swift` gains no lines, and no endpoint, route or client behaviour has changed. **No
+runtime migration occurred** and no real user configuration was read or written; every test owns a
+temporary directory, which is why the store takes an injected directory rather than deriving one
+from `NSHomeDirectory()`, which ignores `$HOME` on this macOS build.
+
+What S1 implements: source-aware classification into ten distinguishable states, replacing the
+single `nil` `Launcher.selected()` returns for three different situations; bounded reads with
+`O_NOFOLLOW | O_NONBLOCK`, an `fstat` regular-file check and a cap-plus-one byte limit, so a symlink
+fails closed, a FIFO cannot block the shared HTTP queue and an oversized file is never fully
+allocated; an opaque revision token fingerprinting the canonical V1 *content*, so neither a
+whitespace-only hand edit nor a lossless migration invalidates a client; non-blocking `flock` on a
+separate `config.lock` held across the whole read-modify-write including a migration-on-read that is
+double-checked under the lock; the three-phase commit with the backup prepared under a temporary name
+and swapped in **before** the commit; recovery from the base bytes captured under the lock rather
+than from the backup; and a per-step filesystem seam that makes every failure point injectable.
+
+Validation at S1: all **319 Swift Testing tests pass in 36 suites** (the 248 retained M2.1–M2.4
+tests plus 71 new ones in 7 new suites), covering classification and source-awareness, symlinks,
+FIFOs, directories and unreadable files, the revision lifecycle including migration transparency,
+over-limit read-only behaviour, selection preservation for empty, leading, trailing and duplicate
+paths, ten failure injections with byte-level assertions on both generations, a two-queue
+concurrency storm, and the platform measurements ADR-016 rule 8 requires. `swift build -c release`
+passes with **zero warnings**. **Eight gate mutations** — removing the seven-control writable gate,
+moving the backup swap after the commit, dropping the in-lock migration re-check, skipping
+post-commit verification, dropping `O_NOFOLLOW`, fingerprinting raw bytes instead of canonical
+content, accepting a missing revision, and accepting a stale revision — were each observed to turn
+the relevant tests red and were reverted from a backup verified byte-identical by SHA-256. One
+mutation in the first round was ineffective rather than caught: it removed a comparison that an
+earlier `guard let` already made unreachable, and was replaced by one that removes the gate where it
+actually is. **No physical iPhone 11 acceptance is claimed or possible for S1**, because no endpoint
+or client behaviour changed.
+
+Two findings surfaced while implementing S1, recorded rather than worked around, because working
+around either would mean changing `Configuration.swift` or adding a second parser:
+
+- A legacy array with more entries than `ConfigurationDecoder.maximumControlCount` (4096) is
+  rejected by the codec's corruption guard **before** migration can run, so it reports `malformed`
+  with `selected: null` rather than `legacy-readonly` with its selection served. ADR-016 rule 3's
+  promise therefore holds only for legacy files the decoder accepts. The reachable shapes of
+  `legacyUnrepresentable` are an entry longer than 4096 bytes and a canonical form over 1 MiB.
+- A legacy file with more than seven entries migrates faithfully and lands in the over-limit state,
+  so it becomes read-only immediately after migration. That is rule 11 working as intended, but it
+  means a hand-edited legacy selection above seven keys can be seen and used, and not edited, until
+  it is reduced by hand.
+
+Remaining material blockers for the rest of M2.5 are listed in `docs/M2.5-DESIGN.md` §17. The two
+that gate S1b are structural: `LauncherRoute.handle` must be extracted from `main.swift`'s
+top-level `routes` closure, because top-level code is unreachable from a test target and the M2.3
+principle is that a test cannot pass against wiring production does not use; and the
+`n`/`expected` request contract has to be added to `DeckRoute.validateParameters`. One
+user-visible regression is disclosed and accepted: an already-loaded pre-M2.5 page can still read
+the deck but can no longer save, and must be reloaded.
+
+M2 overall remains **IN PROGRESS**.
 
 M2 is **not complete**. M2.1, M2.2, M2.3 and M2.4 are accepted; the Action Registry currently
-supports only app launch, and versioned configuration exists only as an unwired, accepted codec —
-storage integration and the read-path cutover are M2.5.
+supports only app launch, and versioned configuration exists as an unwired, accepted codec plus an
+unwired, unreviewed storage layer — the read-path cutover is M2.5's S1b–S7.
 M5 remains the independent security/reliability review. Physical iPhone 11 checks passed
 for WSS streaming, camera frames reaching the Mac, fresh-frame delivery, front/back
 switching, reconnection and deck polling. Continuous live MJPEG was not confirmed on
