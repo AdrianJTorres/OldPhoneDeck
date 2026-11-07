@@ -130,7 +130,8 @@ struct LauncherRouteHandlerTests {
         let server = try HTTPServer(port: 0, queue: DispatchQueue(label: "launcher-route-test"),
                                     budget: HTTPConnectionBudget())
         server.start(admission: { DeckRoute.admit($0, token: self.token) }) { req, conn in
-            guard let route = DeckRoute.match(method: req.method, path: req.path), route == .launcherRead else {
+            guard let route = DeckRoute.match(method: req.method, path: req.path),
+                  route == .launcherRead || route == .launcherSave else {
                 return conn.respond(404, text: "not found")
             }
             LauncherRoute.handle(req, loader: { selected }, saver: saver, on: conn, catalog: catalog)
@@ -164,8 +165,8 @@ struct LauncherRouteHandlerTests {
 
         let response = try get(port: port)
         #expect(response.hasPrefix("HTTP/1.1 200 OK\r\n"))
-        #expect(response.contains("\"selected\":[\"\/Applications\/Safari.app\"]"))
-        #expect(response.contains("\"all\":[{\"name\":\"Safari\",\"path\":\"\/Applications\/Safari.app\"}]"))
+        #expect(response.contains("\"selected\":[\"/Applications/Safari.app\"]"))
+        #expect(response.contains("\"all\":[{\"name\":\"Safari\",\"path\":\"/Applications/Safari.app\"}]"))
     }
 
     @Test func getWithNilSelectedReturnsNull() throws {
