@@ -733,15 +733,17 @@ read path does not otherwise have). Blocking on the lock. `F_FULLFSYNC` per save
 
 ## Implementation note — ADR-016 / M2.5 S1
 
-**Status:** S1 implemented on `m2.5/s1-configuration-store`, **pending independent Codex review
-and Steering acceptance**. M2.5 as a whole remains IN PROGRESS; S1b through S7 are not started.
+**Current status:** S1, S1b and S2–S4 are accepted by Steering on
+`m2.5/s1-configuration-store` (S4 code: `d0d8747`). The store is wired into GET/POST `/launcher`
+and the ES5 client consumes state and revisions. S4 physical iPhone 11 checks and isolated teardown
+passed; production files were unchanged. S5 documentation awaits Steering acceptance; S6/S7 remain
+pending and no production cutover has occurred. ADR-016 remains accepted as originally recorded.
 
-S1 delivers `Sources/oldphonedeck/ConfigurationStore.swift` and nothing else. It is **unwired**:
-`main.swift`, `Control.swift`, `HTTPParsing.swift`, `HTTPServer.swift`, `web/index.html` and
-`Package.swift` are untouched, `Launcher.selected()` and `Launcher.save()` remain the runtime path,
-`Configuration.swift` gains no lines, and no endpoint or client behaviour has changed. No real user
-configuration was read or written; every test owns a temporary directory, which is the reason the
-store takes an injected directory rather than deriving one from `NSHomeDirectory()`.
+**S1 delivery history:** S1 introduced `Sources/oldphonedeck/ConfigurationStore.swift` unwired;
+at that slice the legacy `Launcher` remained the runtime path, the codec and endpoints were
+unchanged, and every test owned a temporary directory. S3 later activated the store and S4 the
+revised client on the feature branch; neither constitutes production deployment. The store's
+injected directory remains necessary because `NSHomeDirectory()` does not follow `$HOME` here.
 
 What exists: source-aware classification into ten states; bounded `O_NOFOLLOW | O_NONBLOCK` reads
 with an `fstat` regular-file check and a cap-plus-one byte limit; the canonical-content revision
