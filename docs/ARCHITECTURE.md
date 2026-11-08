@@ -495,7 +495,9 @@ One file: inline CSS, markup and one ES5 IIFE. No framework or build step.
   Featured metadata uses larger type and 52px artwork; titles/artists truncate within the card.
   Network/battery cards remain visible, with compact network styling and fewer battery rows when
   vertical space is limited. Media buttons expose labels, focus and Enter/Space activation.
-  These changes are implemented on `m3.1/media-ui`, pending physical iPhone 11 acceptance.
+  These changes are implemented on `m3.1/media-ui`; Steering reported physical iPhone 11 PASS
+  on 2026-11-08 for Spotify controls, layouts, regression and Home Screen launch. Apple Music
+  was not physically tested. Integration remains pending Steering review (see `ROADMAP.md`).
 - **State:** module-scope variables only, plus `localStorage` for `token` and `view`
   (wrapped in try/catch for private mode). App selection lives on the Mac, because
   Safari and the Home Screen app have separate storage.

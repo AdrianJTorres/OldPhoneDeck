@@ -400,8 +400,10 @@ Exit criteria: existing behaviour preserved on the iPhone 11; build clean; ADRs 
 
 **STATUS: IN PROGRESS**
 
-**M3.1 — Media-first iPhone UI:** implemented on `m3.1/media-ui`, pending physical iPhone 11
-acceptance and Steering acceptance. The existing music card leads the portrait deck and sits
+**M3.1 — Media-first iPhone UI:** implementation accepted by Steering after physical iPhone 11
+validation PASS (2026-11-08); GitHub consolidation is pending integration review. Implemented in
+`bd73790b9c00b6322b042b89fdff16a0efe58490` on `m3.1/media-ui`.
+The existing music card leads the portrait deck and sits
 beside the keys in wide landscape. Larger metadata, artwork and transport controls reuse
 `/stats`, `/artwork` and `/media`; effective transport targets are at least 44 CSS px after stage
 scaling. App keys, Claude, connectivity, network and battery status remain available. Compact
@@ -417,12 +419,16 @@ Isolated HTTP/HTTPS preview serves the shipped resource and a copied V1 configur
 production access denied by a process sandbox; production contents and metadata remain unchanged.
 Browser emulation and automated checks do not establish physical Safari acceptance.
 
-Physical acceptance pending: on the isolated preview, check Spotify and Apple Music track/artist,
-artwork, paused/playing state, previous/play-pause/next and progress in portrait and landscape;
-rotate with a long title and confirm controls remain visible and easy to tap. Check empty player,
-connectivity indication, app keys, Claude sheet and Home Screen standalone layout. Any app launch,
-media command or note submission during acceptance acts on the Mac; agent preview checks do not
-invoke those actions. No device PASS or production deployment is claimed.
+Physical acceptance evidence, reported by Steering on 2026-11-08: **iPhone 11 PASS** for Spotify
+playback controls, portrait layout, landscape layout, Apps/Claude/status regression and Home Screen
+launch. **Apple Music was not physically tested**; no physical acceptance is claimed for it.
+The automated results above are retained from the implementation record; broad tests were not
+rerun for this documentation consolidation. No additional physical checks are inferred.
+
+Current integration status: the accepted implementation is being consolidated for one PR from
+`m3.1/media-ui` to `main`, pending Steering review. Merge and production deployment are not
+authorized by this consolidation. The existing production server is left running. M3 overall
+remains **IN PROGRESS**; later M3 work is not authorized by this acceptance.
 
 Turn the deck into the intended iPhone 11 control surface.
 
