@@ -234,6 +234,40 @@ struct LauncherRouteStoreWiringTests {
         try client.reply(String(response[separator.upperBound...]), status: status)
     }
 
+    @Test func widgetsOnlySaveAfterDeferredLegacyMigrationPreservesAllSixSelections() throws {
+        let directory = try temporaryStoreDirectory()
+        defer { removeStoreDirectory(directory) }
+        let paths = (1...6).map { "/Legacy\($0).app" }
+        let frozen = try seedLegacy(directory, paths)
+        var operations = ConfigurationFileOperations.live
+        let live = operations
+        let firstCommit = OneShot()
+        operations.commitDocument = { prepared, destination in
+            if firstCommit.consume() { return false }
+            return live.commitDocument(prepared, destination)
+        }
+        let store = ConfigurationStore(directory: directory, operations: operations)
+        let (server, port) = try startServer(store: store)
+        defer { server.stop() }
+        let pending = try jsonBody(get(port: port))
+        #expect(pending["configuration"] as? String == "legacy-pending")
+        #expect(pending["writable"] as? Bool == true)
+        #expect(pending["selected"] as? [String] == paths)
+        #expect(!fileExists(store.configurationPath))
+        let revision = try #require(pending["revision"] as? String)
+        let saved = try jsonBody(post(port: port, body: "internet=0&batteries=1&expected=\(revision)"))
+        #expect(saved["selected"] as? [String] == paths)
+        #expect(saved["saved"] as? Int == 6)
+        #expect(saved["widgets"] as? [String: Bool] == ["internet": false, "batteries": true])
+        guard case .v2(let document) = ConfigurationDecoder.decode(.data(Data(try #require(readBytes(at: store.configurationPath))))) else {
+            Issue.record("deferred migration did not commit V2"); return
+        }
+        #expect(document.controls == (try appDocumentFrom(paths: paths)).controls)
+        #expect(readBytes(at: store.legacyPath) == frozen)
+        #expect(!fileExists(store.backupPath))
+        #expect(leftoverTemporaries(directory).isEmpty)
+    }
+
     @Test func widgetWireContractPreservesSixAppsAndRefusesBadFlagsWithoutWriting() throws {
         let directory = try temporaryStoreDirectory()
         defer { removeStoreDirectory(directory) }

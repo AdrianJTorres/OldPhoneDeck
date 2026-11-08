@@ -438,7 +438,7 @@ V1 controls and metadata migrate intact; immutable V1 snapshot and explicit late
 V1 export support a separately authorized rollback. No production configuration/token/TLS/server
 is touched, no deployment or merge is authorized, and M3.1 production remains accepted.
 
-Automated validation: **404 Swift Testing tests in 43 suites PASS**, including V2 codec/migration,
+Automated validation: **405 Swift Testing tests in 43 suites PASS**, including V2 codec/migration,
 metadata preservation, four combinations, paired-field refusals, stale/mixed concurrent writes,
 failed-write recovery, snapshot retention and latest-controls V1 export. Release build passes with
 zero warnings. The complete inline script parses as ES5 with the existing Node-bundled Acorn;
@@ -447,6 +447,10 @@ reload and six unchanged controls. Five viewport cases retain geometry, eight ke
 media targets ≥44 CSS px; app/media callbacks were intercepted before reaching the Mac.
 An isolated M3.1 binary refuses V2 and serves all six latest selections after explicit restoration
 of the actual pure exporter output. No automatic downgrade or production material is used.
+The independent review identified a visibility-only save from writable `legacy-pending` that
+could discard the six pending legacy selections after a transient GET migration failure. The
+owner fixed preservation of the pending document and added a real HTTP GET/failure/POST
+regression; the 405-test result above includes it.
 One independent focused review of codec/store/wire integrity and rollback is requested on the
 implementation commit before Steering acceptance; its result remains pending here. Physical iPhone 11
 acceptance remains pending: all four combinations and re-enable, Save/Cancel, reload, isolated

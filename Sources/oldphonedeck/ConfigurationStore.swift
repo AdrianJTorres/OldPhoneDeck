@@ -845,9 +845,12 @@ struct ConfigurationStore {
         }
         // Capture the exact V1/V2 base for verified recovery; never restore an older generation.
         var current: DeckConfigurationV2?
-        if case .ready(let value) = classification.state { current = value }
+        switch classification.state {
+        case .ready(let value), .migrationPending(let value, _): current = value
+        default: break
+        }
         let baseValue: ConfigurationState? = classification.v1Source.map { .v1($0) }
-            ?? current.map { .v2($0) }
+            ?? (classification.configBytes == nil ? nil : current.map { .v2($0) })
         let baseBytes = baseValue == nil ? nil : classification.configBytes
 
         // Build under the same lock as the revision check: app-only clients must preserve the
