@@ -401,7 +401,7 @@ Exit criteria: existing behaviour preserved on the iPhone 11; build clean; ADRs 
 **STATUS: IN PROGRESS**
 
 **M3.1 — Media-first iPhone UI:** implementation accepted by Steering after physical iPhone 11
-validation PASS (2026-11-08); GitHub consolidation is pending integration review. Implemented in
+validation PASS (2026-11-08); GitHub consolidation merged at `14872a3a`. Implemented in
 `bd73790b9c00b6322b042b89fdff16a0efe58490` on `m3.1/media-ui`.
 The existing music card leads the portrait deck and sits
 beside the keys in wide landscape. Larger metadata, artwork and transport controls reuse
@@ -425,10 +425,9 @@ launch. **Apple Music was not physically tested**; no physical acceptance is cla
 The automated results above are retained from the implementation record; broad tests were not
 rerun for this documentation consolidation. No additional physical checks are inferred.
 
-Current integration status: the accepted implementation is being consolidated for one PR from
-`m3.1/media-ui` to `main`, pending Steering review. Merge and production deployment are not
-authorized by this consolidation. The existing production server is left running. M3 overall
-remains **IN PROGRESS**; later M3 work is not authorized by this acceptance.
+Current integration status: approved M3.1 merge `14872a3a` is on `origin/main`; Steering
+reports M3.1 production **ACCEPTED**. M3.2.1 leaves that production server unchanged.
+M3 overall remains **IN PROGRESS**; acceptance of M3.1 does not accept later slices.
 
 **M3.2.1 — Configurable Widgets V2: IN PROGRESS, implementation pending acceptance.**
 Architecture approved by Steering on 2026-11-08 (ADR-017); based on approved M3.1 merge
@@ -451,8 +450,20 @@ The independent review identified a visibility-only save from writable `legacy-p
 could discard the six pending legacy selections after a transient GET migration failure. The
 owner fixed preservation of the pending document and added a real HTTP GET/failure/POST
 regression; the 405-test result above includes it.
-One independent focused review of codec/store/wire integrity and rollback is requested on the
-implementation commit before Steering acceptance; its result remains pending here. Physical iPhone 11
+The **single independent focused review PASS** covers final implementation
+`7c50e3e1f47e69350b898a7186d562d5f3e4e90f` against `14872a3a`. A fresh read-only Codex reviewer
+inspected codec/store/wire integrity and rollback, the owner correction, regression and validation
+receipts. The one major finding above is closed; no unresolved blockers, major or minor findings
+remain. The reviewer did not author fixes, run builds or create files. Implementation acceptance
+remains Steering's decision.
+
+An isolated HTTPS preview uses synthetic six-app configuration, its own token and CA, free ports
+8065/8067/8068, and a process sandbox denying production configuration access. The reviewed final
+binary is running there. Server-restart checks preserve hidden preferences, six selections,
+revision, document bytes and immutable V1 snapshot; preview is left with both widgets visible.
+No production configuration/token/TLS was read or copied. Private handoff and validation receipts
+are retained in `../operations/m3.2.1-preview-e77tk_z0/`; the optional preview trust profile has unique
+identifiers and was not installed by the agent. Physical iPhone 11
 acceptance remains pending: all four combinations and re-enable, Save/Cancel, reload, isolated
 server restart, Home Screen, portrait/landscape, six app selections and existing
 apps/Claude/media/Phone/status. Browser emulation does not establish physical acceptance.
