@@ -1,11 +1,11 @@
 import Foundation
 
-/// Configuration storage (M2.5 S1, ADR-016): the layer that gives the M2.4 codec a file to live in.
+/// Configuration storage (ADR-016/017): the layer that gives the M2.4 codec a file to live in.
 ///
 /// This file owns every byte that reaches or leaves `config.json` and `launcher.json`. It is the
 /// only place in the product that decides what a configuration file is allowed to be, when a
 /// document may be replaced, and what happens when a replacement cannot be completed. The codec in
-/// `Configuration.swift` is untouched and stays pure: this store supplies its `ConfigurationInput`
+/// `Configuration.swift` stays pure: this store supplies its `ConfigurationInput`
 /// and consumes its `ConfigurationState`, and adds the two things a codec deliberately cannot know
 /// — which file a document came from, and what the filesystem did.
 ///
@@ -17,7 +17,7 @@ import Foundation
 ///
 /// Three rules from ADR-016 shape everything below:
 ///
-/// 1. **Source-aware shapes** (rule 1). `config.json` must hold a V1 object and `launcher.json`
+/// 1. **Source-aware shapes** (rule 1). `config.json` must hold a V1/V2 object and `launcher.json`
 ///    must hold a legacy array. The codec reports a bare array as `.legacy` no matter where it came
 ///    from, so the store — not the codec — decides that an array in `config.json` is `wrongFormat`
 ///    rather than a document to adopt.
@@ -73,20 +73,22 @@ enum ConfigurationDamage: Equatable {
 /// the store-level successor to `Launcher.selected()`'s single `nil`; the codec's
 /// `ConfigurationState` describes one file's bytes, while this describes the pair.
 enum ConfigurationStoreState: Equatable {
-    /// `config.json` holds a V1 document that the current page can show and re-save.
-    case ready(DeckConfigurationV1)
-    /// A V1 document with more controls than the product has keys. Served in full and read-only:
+    /// Valid V1 whose V2 canonical expansion exceeds the cap. Untouched and read-only.
+    case v1Unrepresentable(DeckConfigurationV1)
+    /// A V2 denotation that the current page can show and re-save.
+    case ready(DeckConfigurationV2)
+    /// A document with more controls than the product has keys. Served in full and read-only:
     /// the editor truncates to `APP_SLOTS` on load, so a save from it would silently discard every
     /// control past the seventh.
-    case overLimit(DeckConfigurationV1)
-    /// A V1 document that cannot be expressed as a path list at all — a title, a custom or gapped
+    case overLimit(DeckConfigurationV2)
+    /// A document whose controls cannot be expressed as a path list at all — a title, a custom or gapped
     /// id, an unregistered action or `.unmodeled` parameters. `selected` is nil, never a subset.
-    case unprojectable(DeckConfigurationV1)
+    case unprojectable(DeckConfigurationV2)
     /// Neither file exists. The one state in which there is genuinely nothing to lose.
     case unconfigured
     /// `config.json` is absent and `launcher.json` holds a legacy selection that migrates cleanly.
     /// The document exists in memory and has not been committed yet.
-    case migrationPending(DeckConfigurationV1, [String])
+    case migrationPending(DeckConfigurationV2, [String])
     /// `launcher.json` is valid legacy data that cannot be represented as V1. Its selection is
     /// still served — hiding it would be worse than refusing to upgrade it — but nothing may be
     /// written, because writing seven controls over it would destroy preserved data.
@@ -105,6 +107,7 @@ enum ConfigurationStoreState: Equatable {
 /// the same rule `ConfigurationError` follows.
 enum ConfigurationStatusToken: String, Equatable {
     case v1
+    case v2
     case migrated
     case migrating
     case legacyPending = "legacy-pending"
@@ -130,6 +133,15 @@ struct ConfigurationRead: Equatable {
     let version: Int?
     let writable: Bool
     let revision: String?
+
+    var widgets: WidgetPreferences? {
+        switch state {
+        case .ready(let document), .overLimit(let document), .unprojectable(let document),
+             .migrationPending(let document, _): return document.widgets
+        case .v1Unrepresentable, .unconfigured: return .visible
+        default: return nil
+        }
+    }
 }
 
 // MARK: - Revision
@@ -142,14 +154,14 @@ struct ConfigurationRead: Equatable {
 /// application — so it is a 64-bit non-cryptographic fingerprint rather than a digest, and no
 /// framework is added for it.
 ///
-/// The payload is the *canonical* V1 form for any state that has one, which gives two properties
+/// The payload is the *canonical* V2 form for any state that has one, which gives two properties
 /// that a fingerprint of the file's raw bytes would not. A whitespace-only hand edit does not
 /// invalidate a client, because the content is unchanged. And **migration does not invalidate a
 /// client either**, because `ConfigurationEncoder.verifiedData` returns
 /// `ConfigurationCanonicalForm.data(configuration)` unchanged, so the bytes a migration commits are
 /// byte-identical to the bytes this fingerprinted beforehand.
 enum ConfigurationRevision {
-    /// A state with a V1 denotation: the canonical encoding of the document.
+    /// A state with a V2 denotation: the canonical encoding of the document.
     static let versionedTag: UInt8 = 0x76   // 'v'
     /// Raw bytes of `config.json`, for a document that could not be decoded.
     static let configTag: UInt8 = 0x63      // 'c'
@@ -161,14 +173,14 @@ enum ConfigurationRevision {
 
     /// nil when the value cannot be encoded canonically, which cannot happen for a document the
     /// decoder just accepted. A missing revision means read-only, never "any revision accepted".
-    static func ofDocument(_ configuration: DeckConfigurationV1) -> String? {
+    static func ofDocument(_ configuration: DeckConfigurationV2) -> String? {
         guard let data = ConfigurationCanonicalForm.data(configuration) else { return nil }
         return fingerprint(tag: versionedTag, payload: [UInt8](data))
     }
 
-    /// The empty V1 document is the denotation of `.unconfigured`, so a client that reads an
+    /// The empty V2 document is the denotation of `.unconfigured`, so a client that reads an
     /// unconfigured deck and then saves an empty selection is not writing over anything.
-    static func ofUnconfigured() -> String? { ofDocument(DeckConfigurationV1(controls: [])) }
+    static func ofUnconfigured() -> String? { ofDocument(DeckConfigurationV2(controls: [])) }
 
     static func ofRawBytes(tag: UInt8, _ bytes: [UInt8]?) -> String {
         fingerprint(tag: tag, payload: bytes ?? [])
@@ -504,6 +516,7 @@ enum ConfigurationWriteOutcome: Equatable {
 /// choice.
 struct ConfigurationStore {
     static let configurationName = "config.json"
+    static let v1SnapshotName = "config.json.v1"
     static let backupName = "config.json.prev"
     static let legacyName = "launcher.json"
     static let lockName = "config.lock"
@@ -533,6 +546,7 @@ struct ConfigurationStore {
     /// visible and matches the stateless request handling the rest of the product assumes.
     func load() -> ConfigurationRead {
         let classification = classify()
+        if classification.v1Source != nil { return migrateV1() }
         guard case .migrationPending = classification.state else {
             return Self.read(from: classification)
         }
@@ -592,6 +606,16 @@ struct ConfigurationStore {
         let state: ConfigurationStoreState
         let configBytes: [UInt8]?
         let legacyBytes: [UInt8]?
+
+        let v1Source: DeckConfigurationV1?
+
+        init(state: ConfigurationStoreState, configBytes: [UInt8]?, legacyBytes: [UInt8]?,
+             v1Source: DeckConfigurationV1? = nil) {
+            self.state = state
+            self.configBytes = configBytes
+            self.legacyBytes = legacyBytes
+            self.v1Source = v1Source
+        }
     }
 
     func classify() -> Classification {
@@ -602,7 +626,16 @@ struct ConfigurationStore {
         switch configRead {
         case .bytes(let bytes):
             switch ConfigurationDecoder.decode(.data(Data(bytes))) {
-            case .v1(let configuration):
+            case .v1(let source):
+                switch ConfigurationMigrator.migrateToV2(source) {
+                case .success(let configuration):
+                    return Classification(state: Self.projectableState(configuration),
+                                          configBytes: configBytes, legacyBytes: nil, v1Source: source)
+                case .failure:
+                    return Classification(state: .v1Unrepresentable(source), configBytes: configBytes,
+                                          legacyBytes: nil, v1Source: source)
+                }
+            case .v2(let configuration):
                 return Classification(state: Self.projectableState(configuration),
                                       configBytes: configBytes, legacyBytes: nil)
             // An array here is legacy data in the versioned file's place. Reported, never adopted.
@@ -641,7 +674,7 @@ struct ConfigurationStore {
         case .bytes(let bytes):
             switch ConfigurationDecoder.decode(.data(Data(bytes))) {
             case .legacy(let paths):
-                switch ConfigurationMigrator.migrateToV1(paths) {
+                switch ConfigurationMigrator.migrateToV2(paths) {
                 case .success(let configuration):
                     return Classification(state: .migrationPending(configuration, paths),
                                           configBytes: nil, legacyBytes: legacyBytes)
@@ -652,7 +685,7 @@ struct ConfigurationStore {
             // A versioned document in the legacy file is a layout error, not a document to adopt:
             // moving it would be a mutation nobody asked for, and is undefined when both files hold
             // one.
-            case .v1, .unsupportedVersion:
+            case .v1, .v2, .unsupportedVersion:
                 return Classification(state: .wrongFormat(.legacy), configBytes: nil, legacyBytes: legacyBytes)
             case .malformed(let error):
                 return Classification(state: .damaged(.legacy, .malformed(error)),
@@ -667,8 +700,8 @@ struct ConfigurationStore {
     /// Projectability is decided before the control count, so a titled nine-control document reports
     /// `unrepresentable`. Which of two read-only reasons wins matters less than the answer being the
     /// same every time.
-    private static func projectableState(_ configuration: DeckConfigurationV1) -> ConfigurationStoreState {
-        guard ConfigurationMigrator.legacySelection(configuration) != nil else { return .unprojectable(configuration) }
+    private static func projectableState(_ configuration: DeckConfigurationV2) -> ConfigurationStoreState {
+        guard ConfigurationMigrator.legacySelection(configuration.v1) != nil else { return .unprojectable(configuration) }
         guard configuration.controls.count <= ConfigurationStorePolicy.maximumAppControls else {
             return .overLimit(configuration)
         }
@@ -679,7 +712,7 @@ struct ConfigurationStore {
                      statusOverride: ConfigurationStatusToken? = nil) -> ConfigurationRead {
         ConfigurationRead(state: classification.state,
                           selected: selected(for: classification.state),
-                          status: statusOverride ?? status(for: classification.state),
+                          status: statusOverride ?? (classification.v1Source != nil && isWritable(classification.state) ? .v1 : status(for: classification.state)),
                           version: version(for: classification.state),
                           writable: isWritable(classification.state),
                           revision: revision(for: classification))
@@ -691,9 +724,10 @@ struct ConfigurationStore {
             // `.overLimit` serves every path: `selected: nil` means "cannot be expressed as a path
             // list at all", and an eight-control document of app launches can be. The client
             // truncates for display; the server never truncates on disk.
-            return ConfigurationMigrator.legacySelection(configuration)
+            return ConfigurationMigrator.legacySelection(configuration.v1)
         case .migrationPending(_, let paths), .legacyUnrepresentable(let paths, _):
             return paths
+        case .v1Unrepresentable(let document): return ConfigurationMigrator.legacySelection(document)
         case .unprojectable, .unconfigured, .damaged, .wrongFormat, .busy:
             return nil
         }
@@ -701,7 +735,8 @@ struct ConfigurationStore {
 
     static func status(for state: ConfigurationStoreState) -> ConfigurationStatusToken {
         switch state {
-        case .ready: return .v1
+        case .ready: return .v2
+        case .v1Unrepresentable: return .unrepresentable
         case .overLimit: return .tooManyControls
         case .unprojectable: return .unrepresentable
         case .unconfigured: return .unconfigured
@@ -729,7 +764,7 @@ struct ConfigurationStore {
     }
 
     /// The five conditions of ADR-016's writable rule, minus the lock, which is per-response.
-    /// Conditions 1 and 4 are already encoded in the state: a state with a V1 denotation implies the
+    /// Conditions 1 and 4 are already encoded in the state: a state with a V2 denotation implies the
     /// file was absent or a readable regular file.
     static func isWritable(_ state: ConfigurationStoreState) -> Bool {
         switch state {
@@ -739,7 +774,7 @@ struct ConfigurationStore {
         // `.overLimit`). The legacy file stays authoritative until the operator trims it.
         case .migrationPending(let configuration, _):
             return configuration.controls.count <= ConfigurationStorePolicy.maximumAppControls
-        case .overLimit, .unprojectable, .legacyUnrepresentable, .damaged, .wrongFormat, .busy:
+        case .v1Unrepresentable, .overLimit, .unprojectable, .legacyUnrepresentable, .damaged, .wrongFormat, .busy:
             return false
         }
     }
@@ -749,6 +784,9 @@ struct ConfigurationStore {
         case .ready(let configuration), .overLimit(let configuration), .unprojectable(let configuration),
              .migrationPending(let configuration, _):
             return ConfigurationRevision.ofDocument(configuration)
+        case .v1Unrepresentable(let source):
+            guard let data = ConfigurationCanonicalForm.data(source) else { return nil }
+            return ConfigurationRevision.fingerprint(tag: ConfigurationRevision.versionedTag, payload: [UInt8](data))
         case .unconfigured:
             return ConfigurationRevision.ofUnconfigured()
         case .legacyUnrepresentable:
@@ -776,23 +814,14 @@ struct ConfigurationStore {
     /// `paths` is already parsed: turning `n=` and `paths=` into this array is the route's job
     /// (S1b), which keeps this slice free of wire concerns. `expectedRevision` is the token the
     /// client was given, and nil or empty means it had none.
-    func write(paths: [String], expectedRevision: String?) -> ConfigurationWriteOutcome {
+    func write(paths: [String]?, expectedRevision: String?, widgets: WidgetPreferences? = nil) -> ConfigurationWriteOutcome {
         // P1 — product bounds, before any I/O.
-        guard paths.count <= ConfigurationStorePolicy.maximumAppControls else {
+        guard (paths?.count ?? 0) <= ConfigurationStorePolicy.maximumAppControls else {
             return .rejected(ConfigurationWriteFailure(rejection: .tooManyKeys, stateAfterFailure: nil))
         }
-        guard paths.allSatisfy({ $0.utf8.count <= ConfigurationStorePolicy.maximumEntryBytes }) else {
+        guard paths?.allSatisfy({ $0.utf8.count <= ConfigurationStorePolicy.maximumEntryBytes }) != false else {
             return .rejected(ConfigurationWriteFailure(rejection: .entryTooLong, stateAfterFailure: nil))
         }
-
-        // P2 — pre-commit validation. `migrateToV1` is the one builder for both a save and a
-        // migration, so the two cannot drift apart about ids, order or encodability, and
-        // `verifiedData` requires the encoder's own output to decode back to this value.
-        guard case .success(let document) = ConfigurationMigrator.migrateToV1(paths),
-              case .success(let bytes) = ConfigurationEncoder.verifiedData(document) else {
-            return .rejected(ConfigurationWriteFailure(rejection: .writeFailed, stateAfterFailure: nil))
-        }
-        let payload = [UInt8](bytes)
 
         // P3 — non-blocking. Waiting here would wait on the queue that also carries MJPEG.
         guard let descriptor = acquireLock() else {
@@ -814,18 +843,33 @@ struct ConfigurationStore {
         guard expected == Self.revision(for: classification) else {
             return .rejected(ConfigurationWriteFailure(rejection: .stale, stateAfterFailure: nil))
         }
-        // The base exists exactly when `config.json` decoded to a V1 document, which is the only
-        // writable state that has one. Recovery restores these bytes, so it cannot restore a
-        // generation older than the one the client's revision described.
-        var baseValue: DeckConfigurationV1?
-        if case .ready(let current) = classification.state { baseValue = current }
+        // Capture the exact V1/V2 base for verified recovery; never restore an older generation.
+        var current: DeckConfigurationV2?
+        if case .ready(let value) = classification.state { current = value }
+        let baseValue: ConfigurationState? = classification.v1Source.map { .v1($0) }
+            ?? current.map { .v2($0) }
         let baseBytes = baseValue == nil ? nil : classification.configBytes
+
+        // Build under the same lock as the revision check: app-only clients must preserve the
+        // latest flags. Visibility-only saves keep the complete current controls unchanged.
+        guard case .success(var document) = ConfigurationMigrator.migrateToV2(paths ?? []) else {
+            return .rejected(ConfigurationWriteFailure(rejection: .writeFailed, stateAfterFailure: nil))
+        }
+        if let current, paths == nil || ConfigurationMigrator.legacySelection(current.v1) == paths {
+            document.controls = current.controls
+        }
+        document.widgets = widgets ?? current?.widgets ?? .visible
+        guard case .success(let bytes) = ConfigurationEncoder.verifiedData(document),
+              classification.v1Source == nil || preserveV1Snapshot(classification) else {
+            return .rejected(ConfigurationWriteFailure(rejection: .writeFailed, stateAfterFailure: nil))
+        }
+        let payload = [UInt8](bytes)
 
         switch commit(document: document, baseBytes: baseBytes, baseValue: baseValue,
                       encodedPayload: payload) {
         case .success(let revision):
             // Derived rather than assumed. `.ready` is provable here — the bounds checked above cap
-            // the count and `migrateToV1` only produces projectable controls — but a response must
+            // the count and `migrateToV2` only produces projectable controls — but a response must
             // never be able to claim `writable` for a document the writable rule would refuse.
             let resulting = Self.projectableState(document)
             return .saved(ConfigurationRead(state: resulting,
@@ -866,7 +910,7 @@ struct ConfigurationStore {
     /// `baseBytes`/`baseValue` are nil for an initial migration, which has no previous generation to
     /// retain or return to. `encodedPayload` is the encoded document, computed by the caller for a
     /// save and here for a migration.
-    private func commit(document: DeckConfigurationV1, baseBytes: [UInt8]?, baseValue: DeckConfigurationV1?,
+    private func commit(document: DeckConfigurationV2, baseBytes: [UInt8]?, baseValue: ConfigurationState?,
                         encodedPayload: [UInt8]? = nil) -> Result<String, CommitFailure> {
         let payload: [UInt8]
         if let supplied = encodedPayload {
@@ -948,7 +992,7 @@ struct ConfigurationStore {
 
         // V1 — post-commit verification. It should be unreachable for a payload `verifiedData`
         // already accepted; it exists because the alternative is trusting the rename.
-        guard let verified = readVerifiedDocument(at: configurationPath), verified == document else {
+        guard let verified = readVerifiedState(at: configurationPath), verified == .v2(document) else {
             return recover(baseBytes: baseBytes, baseValue: baseValue)
         }
         guard let revision = ConfigurationRevision.ofDocument(document) else {
@@ -958,7 +1002,7 @@ struct ConfigurationStore {
     }
 
     /// R1/R2 — undo a commit that could not be verified, or admit that it cannot be undone.
-    private func recover(baseBytes: [UInt8]?, baseValue: DeckConfigurationV1?) -> Result<String, CommitFailure> {
+    private func recover(baseBytes: [UInt8]?, baseValue: ConfigurationState?) -> Result<String, CommitFailure> {
         guard let baseBytes, let baseValue else {
             // An initial migration has no previous generation. The damaged document is retained as
             // evidence rather than deleted, and is never reported as a successful migration. Its
@@ -989,22 +1033,81 @@ struct ConfigurationStore {
         operations.syncDirectory(directoryPath)
         // Restored, and proved restored: a recovery that is not verified is a second unverified
         // commit.
-        guard let restored = readVerifiedDocument(at: configurationPath), restored == baseValue else {
+        guard let restored = readVerifiedState(at: configurationPath), restored == baseValue else {
             return .failure(.postCommit(.recoveryFailed))
         }
         return .failure(.postCommit(.recoveredFromFailedCommit))
     }
 
-    private func readVerifiedDocument(at path: String) -> DeckConfigurationV1? {
-        switch operations.readForVerification(path, ConfigurationDecoder.maximumDocumentBytes) {
-        case .bytes(let bytes):
-            if case .v1(let configuration) = ConfigurationDecoder.decode(.data(Data(bytes))) {
-                return configuration
-            }
-            return nil
-        case .absent, .unreadable, .notRegularFile:
+    private func readVerifiedState(at path: String) -> ConfigurationState? {
+        guard case .bytes(let bytes) = operations.readForVerification(path, ConfigurationDecoder.maximumDocumentBytes) else {
             return nil
         }
+        switch ConfigurationDecoder.decode(.data(Data(bytes))) {
+        case .v1(let document): return .v1(document)
+        case .v2(let document): return .v2(document)
+        default: return nil
+        }
+    }
+
+    /// Read-path promotion uses the same commit/recovery algorithm as a save. A racing writer is
+    /// adopted after the locked re-read; a failed verification restores the original V1 bytes.
+    private func migrateV1() -> ConfigurationRead {
+        guard let descriptor = acquireLock() else {
+            let current = classify()
+            return ConfigurationRead(state: current.state, selected: Self.selected(for: current.state),
+                                     status: .migrating, version: nil, writable: false, revision: nil)
+        }
+        defer { releaseLock(descriptor) }
+        let current = classify()
+        guard let source = current.v1Source,
+              case .success(let document) = ConfigurationMigrator.migrateToV2(source) else {
+            return Self.read(from: current)
+        }
+        guard preserveV1Snapshot(current) else { return migrationDeferred(current) }
+        switch commit(document: document, baseBytes: current.configBytes, baseValue: .v1(source)) {
+        case .success:
+            let committed = classify()
+            return Self.read(from: committed,
+                             statusOverride: committed.state == .ready(document) ? .migrated : nil)
+        case .failure(.preCommit), .failure(.postCommit(.recoveredFromFailedCommit)):
+            return migrationDeferred(current)
+        case .failure(.postCommit):
+            let after = classify()
+            return ConfigurationRead(state: after.state, selected: nil, status: .corrupt,
+                                     version: nil, writable: false, revision: Self.revision(for: after))
+        }
+    }
+
+    private func migrationDeferred(_ current: Classification) -> ConfigurationRead {
+        ConfigurationRead(state: current.state, selected: Self.selected(for: current.state),
+                          status: Self.isWritable(current.state) ? .legacyPending : Self.status(for: current.state),
+                          version: nil, writable: Self.isWritable(current.state), revision: Self.revision(for: current))
+    }
+
+    /// An immutable, byte-exact first V1 snapshot, independent of the rotating .prev generation.
+    /// Publish a fully synced 0600 temporary with link(2)'s no-replace semantics. If the filesystem
+    /// cannot do that, promotion fails closed; an existing valid V1 snapshot is never replaced.
+    private func preserveV1Snapshot(_ current: Classification) -> Bool {
+        guard let bytes = current.configBytes, current.v1Source != nil else { return false }
+        let path = directory.appendingPathComponent(Self.v1SnapshotName).path
+        switch operations.readBounded(path, ConfigurationDecoder.maximumDocumentBytes) {
+        case .bytes(let existing):
+            if case .v1 = ConfigurationDecoder.decode(.data(Data(existing))) { return true }
+            return false
+        case .absent: break
+        default: return false
+        }
+        guard let temporary = operations.makeTemporary(Self.temporaryPrefix, directoryPath) else { return false }
+        defer { operations.remove(temporary.path) }
+        let prepared = operations.writeTemporary(temporary, bytes) && operations.syncTemporary(temporary)
+        operations.closeTemporary(temporary)
+        guard prepared, operations.hardLink(temporary.path, path) else { return false }
+        operations.syncDirectory(directoryPath)
+        guard case .bytes(let saved) = operations.readForVerification(path, ConfigurationDecoder.maximumDocumentBytes) else {
+            return false
+        }
+        return saved == bytes
     }
 
     /// The pending backup's name, derived from the random suffix `mkstemp` already guaranteed to be

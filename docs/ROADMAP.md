@@ -430,6 +430,29 @@ Current integration status: the accepted implementation is being consolidated fo
 authorized by this consolidation. The existing production server is left running. M3 overall
 remains **IN PROGRESS**; later M3 work is not authorized by this acceptance.
 
+**M3.2.1 — Configurable Widgets V2: IN PROGRESS, implementation pending acceptance.**
+Architecture approved by Steering on 2026-11-08 (ADR-017); based on approved M3.1 merge
+`14872a3a`, branch `m3.2/widgets-v2`, Codex WRITE_OWNER. Two fixed Internet/Batteries
+visibility flags persist through the existing revision-aware store and ES5 Save/Cancel editor.
+V1 controls and metadata migrate intact; immutable V1 snapshot and explicit latest-controls
+V1 export support a separately authorized rollback. No production configuration/token/TLS/server
+is touched, no deployment or merge is authorized, and M3.1 production remains accepted.
+
+Automated validation: **404 Swift Testing tests in 43 suites PASS**, including V2 codec/migration,
+metadata preservation, four combinations, paired-field refusals, stale/mixed concurrent writes,
+failed-write recovery, snapshot retention and latest-controls V1 export. Release build passes with
+zero warnings. The complete inline script parses as ES5 with the existing Node-bundled Acorn;
+real browser checks against isolated HTTPS pass long-press, Save/Cancel, all four combinations,
+reload and six unchanged controls. Five viewport cases retain geometry, eight keys and effective
+media targets ≥44 CSS px; app/media callbacks were intercepted before reaching the Mac.
+An isolated M3.1 binary refuses V2 and serves all six latest selections after explicit restoration
+of the actual pure exporter output. No automatic downgrade or production material is used.
+One independent focused review of codec/store/wire integrity and rollback is requested on the
+implementation commit before Steering acceptance; its result remains pending here. Physical iPhone 11
+acceptance remains pending: all four combinations and re-enable, Save/Cancel, reload, isolated
+server restart, Home Screen, portrait/landscape, six app selections and existing
+apps/Claude/media/Phone/status. Browser emulation does not establish physical acceptance.
+
 Turn the deck into the intended iPhone 11 control surface.
 
 - iPhone 11 optimized control interface (layout, touch targets, always-on behaviour).

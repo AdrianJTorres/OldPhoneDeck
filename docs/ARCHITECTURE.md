@@ -1,9 +1,10 @@
 # ARCHITECTURE.md — PhoneDeck
 
-Architecture reference for M2.5 on `m2.5/s1-configuration-store` (S1–S4 code at `d0d8747`).
+Architecture reference including M3.2.1 on `m3.2/widgets-v2` (implementation pending acceptance).
 The upstream baseline is `e622184`. M2.1–M2.4 and M2.5 S1–S7 are accepted by Steering;
-**M2.5 is COMPLETE (2026-11-08)**. The V1 codec (ADR-015), active `ConfigurationStore` and
-revision-aware ES5 client (ADR-016) are wired end to end.
+**M2.5 is COMPLETE (2026-11-08)**. The V1/V2 codec (ADR-015/017), active `ConfigurationStore` and
+revision-aware ES5 client (ADR-016/017) are wired end to end on this branch. Production remains
+the accepted M3.1 release at `14872a3a`; this task does not deploy or migrate production.
 `Launcher.selected()` / `Launcher.save()` are retired.
 
 Steering confirms **PASS** for production migration/cutover, rollback rehearsal, production
@@ -92,7 +93,7 @@ binary, stop it with Ctrl-C.
 | `HTTPParsing.swift` | — | Incremental framing; route metadata, admission and pure parameter validation, including launcher selection syntax | `HTTPRequestParser`, `HTTPRequestHead`, `HTTPRequest`, `HTTPFailure`, `DeckRoute` |
 | `ResourceLimits.swift` | — | Explicit HTTP/media budgets, message validation, frame handoff, audio accounting | `HTTPConnectionBudget`, `MediaSessionBudget`, `PhoneMediaMessage`, `LatestFrameHandoff`, `AudioQueueBudget` |
 | `ActionRegistry.swift` | — | Approved-action boundary: identifier syntax, server-authored metadata, typed parameters, authorization, controlled execution, shared `POST /launch` handler | `ActionID`, `ActionKind`, `ActionDescriptor`, `ActionParameters`, `AppLaunchParameters`, `ActionOutcome`, `ActionRegistry`, `AppLaunchExecutor`, `AppLaunchAdapter`, `AppLaunchRoute` |
-| `Configuration.swift` | — | Active pure V1 codec (ADR-015), used by the store: strict JSON, exact integers, shared canonical form, encode/decode and lossless in-memory migration. No file I/O, `Apps` or executor | `ControlID`, `ControlPresentation`, `ControlParameters`, `DeckControl`, `DeckConfigurationV1`, `ConfigurationError`, `ConfigurationInput`, `ConfigurationState`, `ConfigurationJSONValue`, `ConfigurationJSONScanner`, `ExactJSONNumber`, `ConfigurationCanonicalForm`, `ConfigurationDecoder`, `ConfigurationEncoder`, `ConfigurationMigrator` |
+| `Configuration.swift` | — | Pure V1/V2 codec and explicit latest-controls V1 export (ADR-015/017), used by the store: strict JSON, exact integers, shared canonical form, encode/decode and lossless in-memory migration. No file I/O, `Apps` or executor | `ControlID`, `ControlPresentation`, `ControlParameters`, `DeckControl`, `DeckConfigurationV1`, `ConfigurationError`, `ConfigurationInput`, `ConfigurationState`, `ConfigurationJSONValue`, `ConfigurationJSONScanner`, `ExactJSONNumber`, `ConfigurationCanonicalForm`, `ConfigurationDecoder`, `ConfigurationEncoder`, `ConfigurationMigrator` |
 | `ConfigurationStore.swift` | — | Active storage (ADR-016): source precedence, bounded regular-file reads, revision, non-blocking lock, migration-on-read, atomic replacement, backup and recovery | `ConfigurationStore`, `ConfigurationStorePolicy`, `ConfigurationRead`, `ConfigurationRevision`, `ConfigurationFileOperations`, `POSIXConfigurationFile`, `ConfigurationWriteOutcome` |
 | `LauncherRoute.swift` | — | Shared GET/POST handler, pure selection parser, response shape and refusal mapping; used by the application and loopback tests | `LauncherRoute.handle/parseSelection/responseJSON/refusal` |
 | `Tests/oldphonedeckTests/` | — | Swift Testing parser/resource, action-boundary, configuration-codec, configuration-storage and HTTP/WS/WSS/TLS socket tests; no app startup | Parsing, lifecycle, budget, handoff, audio, action, launch-route, codec, store classification/revision/persistence/failure-injection and filesystem-platform tests |
@@ -289,8 +290,8 @@ apply before handlers (see §5).
 | POST | `/speedtest` | yes | Run a speed test | — | `ok` | spawns `networkQuality` (~20 s) |
 | POST | `/media` | yes | Transport control | `cmd` = `playpause`\|`next`\|`previous`\|`open` | `ok` | AppleScript to the player |
 | GET | `/artwork` | yes | Album art | `id` (currently ignored) | JPEG or `404` | none |
-| GET | `/launcher` | yes | Catalog, selection and configuration state | — | Shared launcher JSON (below), including degraded states | catalog scan; may migrate legacy data into `config.json` |
-| POST | `/launcher` | yes | Save selection with optimistic concurrency | `n`, `paths`, `expected` | Shared launcher JSON + `saved`, or fixed error token | locked atomic write to `config.json`; retains one backup; never filters paths |
+| GET | `/launcher` | yes | Catalog, selection and configuration state | — | Shared launcher JSON (below), including widgets and degraded states | catalog scan; may migrate legacy/V1 data into V2 `config.json` |
+| POST | `/launcher` | yes | Save selection/widget visibility with optimistic concurrency | `n`, `paths`, `expected`, optional paired `internet`/`batteries` | Shared launcher JSON + `saved`, or fixed error token | locked atomic write to `config.json`; retains one backup; never filters paths |
 | GET | `/icon` | yes | App icon | `path` | PNG or `404` | renders + caches on main thread |
 | POST | `/launch` | yes | Open an app through the action boundary | `path` | `ok` or `404` | app launch dispatched to the main queue (`ok` = accepted, not activated) |
 | POST | `/claude` | yes | New Claude chat / focus | `text`, `send=1` | `ok` | opens `claude://`; may press Return |
@@ -303,19 +304,23 @@ apply before handlers (see §5).
 granting execution authority. `/media`, `/claude`, `/speedtest` and `/icon` remain outside the
 registry; the other action-shaped capabilities require explicit later migration.
 
-**Launcher response and request contract (ADR-016).** Authenticated GET returns `200` even in a
+**Launcher response and request contract (ADR-016/017).** Authenticated GET returns `200` even in a
 degraded configuration state. GET and successful POST always include `selected` (full path list or
-`null`), `all` (the Mac's `{name,path}` catalog), `configuration` (fixed status token) and `writable`.
+`null`), `all` (the Mac's `{name,path}` catalog), `configuration` (fixed status token), `writable` and `widgets` (two booleans, or null when unknown).
 `revision` is an opaque token, absent on `migrating`; `version` appears only for
 `unsupported-version`. Successful POST adds `saved`, the number of stored entries, and supplies
 the refreshed revision so another edit needs no GET. `[]` is an empty selection; `null` is not a
 replacement deck and can also mean unconfigured or unprojectable data.
 
-`configuration` values are `v1`, `migrated`, `migrating`, `legacy-pending`, `unconfigured`,
+`configuration` values are `v1` (deferred V1 promotion), `v2`, `migrated`, `migrating`, `legacy-pending`, `unconfigured`,
 `unrepresentable`, `too-many-controls`, `legacy-readonly`, `malformed`, `unsupported-version`,
 `unreadable`, `wrong-format` and `corrupt` (`ConfigurationStatusToken`).
 
-POST is form-encoded. Present `n` must be canonical unsigned decimal `0`–`7`; `n=0` requires empty
+POST is form-encoded. Paired `internet`/`batteries` flags require exact `0`/`1`; both absent preserves
+current preferences. With both present and neither `n` nor `paths`, only widgets change. All
+updates use one revision over controls and flags, assembled under the lock.
+
+Present `n` must be canonical unsigned decimal `0`–`7`; `n=0` requires empty
 `paths`. For `n>=1`, split newline-separated `paths` preserving empties and require exactly `n`
 entries, each at most 4096 UTF-8 bytes. Thus `n=1&paths=` stores one empty path. Absent `n` retains
 legacy splitting that omits empty entries; store bounds still apply. `expected` echoes the last
@@ -325,7 +330,7 @@ state before a missing-revision refusal.
 
 | HTTP status | Plain-text refusal token |
 |---|---|
-| `400` | `invalid-count`, `count-mismatch`, `entry-too-long`, `too-many-keys`, `missing-revision` |
+| `400` | `invalid-count`, `count-mismatch`, `entry-too-long`, `too-many-keys`, `missing-revision`, `invalid-widgets` |
 | `409` | State token (for example `malformed`, `unrepresentable`, `too-many-controls`), or `stale` |
 | `503` | `busy` (lock contention or inability to acquire a safe lock) |
 | `500` | `write-failed`, `migration-failed`, `recovery-failed` |
@@ -335,12 +340,13 @@ Ingress/authentication failures retain §5's statuses. Error tokens contain no d
 **Active store.** `main.swift` injects the selected configuration directory into the shared handler
 for both HTTP and HTTPS. Every operation reclassifies disk state. `config.json` takes precedence;
 only its absence allows `launcher.json` to be consulted, never its damage or unsupported version.
-GET migrates decodable legacy data under a non-blocking exclusive lock, using the classification
+GET migrates decodable legacy/V1 data to V2 under a non-blocking exclusive lock, using the classification
 re-read under that lock; the original `launcher.json` remains byte-intact. Contended migration
 returns the legacy selection as `migrating`, read-only and without a revision.
 
 Writes require a projectable, writable state and matching revision under the lock. They preserve
-order, duplicates, empty entries and uninstalled paths. Over-limit or unprojectable V1 documents,
+order, duplicates, empty entries and uninstalled paths. V1 migration copies full controls including metadata;
+widget-only saves retain controls and app-only saves retain flags. Over-limit or unprojectable documents,
 damaged/unsupported/wrong-format files and unrepresentable legacy data refuse writes. Projectable
 over-limit data is served in full, never truncated on disk. A legacy array above the codec's
 4096-control guard instead reports `malformed` with `selected: null`; its bytes remain untouched.
@@ -351,6 +357,13 @@ Post-commit read/decode must equal the intended value. Failed verification resto
 captured under the lock, not an older backup. An initial migration has no base; failed verification
 retains the damaged document and frozen legacy evidence and reports failure. Ordinary reads do not
 automatically restore `.prev` or fall back to legacy data.
+
+Before V1 promotion, an immutable byte-exact `config.json.v1` snapshot is prepared and verified;
+`.prev` remains the rolling base. Unsafe/unpublishable snapshots block promotion. A valid V1
+that cannot fit V2 remains untouched and read-only. Rollback uses the pure explicit
+`ConfigurationMigrator.exportV1` on the latest V2, preserving all controls and intentionally
+omitting flags; M3.1 cannot read V2 directly. No automatic downgrade or restore exists. See
+ADR-017 for the separately authorized deployment and rollback procedure.
 
 ## 8. macOS integrations
 
@@ -455,7 +468,8 @@ preserved. The startup banner names the selected directory.
 | Path | Written by | Mode | Content |
 |---|---|---|---|
 | `token` | `loadToken` | `0600` | Access code |
-| `config.json` | `ConfigurationStore` migration/save/recovery | `0600` for store-created files | Authoritative V1 document; atomically replaced, never modified in place |
+| `config.json` | `ConfigurationStore` migration/save/recovery | `0600` for store-created files | Authoritative V2 document after promotion (V1 remains readable); atomically replaced, never modified in place |
+| `config.json.v1` | `ConfigurationStore` before first V1 promotion | `0600` | Immutable byte-exact pre-cutover V1 snapshot; no automatic restore |
 | `config.json.prev` | `ConfigurationStore` backup swap | Source mode for hard link; `0600` for copy fallback | One base generation, prepared before commit; not auto-adopted on reads |
 | `config.lock` | `ConfigurationStore` lock acquisition | `0600` | Regular, no-follow file; advisory `flock(LOCK_EX \| LOCK_NB)` held across migration/write/recovery |
 | `launcher.json` | No writer in this branch | Existing mode retained | Frozen legacy array, read only when `config.json` is absent; never rewritten or deleted |
@@ -493,25 +507,27 @@ One file: inline CSS, markup and one ES5 IIFE. No framework or build step.
   them when landscape `W >= 640`; compact legacy landscape retains a single-row player.
   Transport targets are sized with the inverse stage scale to stay at least 44 CSS px effective.
   Featured metadata uses larger type and 52px artwork; titles/artists truncate within the card.
-  Network/battery cards remain visible, with compact network styling and fewer battery rows when
+  Network/battery cards default to visible and can be hidden individually, with compact network styling and fewer battery rows when
   vertical space is limited. Media buttons expose labels, focus and Enter/Space activation.
   These changes are implemented on `m3.1/media-ui`; Steering reported physical iPhone 11 PASS
   on 2026-11-08 for Spotify controls, layouts, regression and Home Screen launch. Apple Music
-  was not physically tested. Integration remains pending Steering review (see `ROADMAP.md`).
+  was not physically tested. M3.1 is accepted and merged at `14872a3a`; M3.2.1 physical acceptance remains pending.
 - **State:** module-scope variables only, plus `localStorage` for `token` and `view`
-  (wrapped in try/catch for private mode). App selection lives on the Mac, because
+  (wrapped in try/catch for private mode). App selection and widget visibility live on the Mac, because
   Safari and the Home Screen app have separate storage.
 - **Configuration:** GET replaces `launcher` with the complete response (`selected` and `all`
   included). `applyConfig` tracks state, writable and revision, displays fixed text in `#cfgWarn`,
   and marks Save disabled. The save handler guards read-only states and sends `n`, encoded
-  newline-separated `paths` and `expected`. Successful POST replaces the complete response and
+  newline-separated `paths`, `expected` and both visibility flags. Internet/Batteries checkboxes
+  draft changes until Save; Cancel/reopen restores saved values. A fixed ES5 descriptor list
+  changes `display` only, retaining geometry and polling. Successful POST replaces the complete response and
   refreshes revision before another edit; it does not invent a selection from the local draft.
   Non-200 saves retain the draft and revision with feedback for stale/missing revision, busy,
   unreachable and failed-write states. Failed/malformed GET or malformed successful POST responses
   mark configuration unreachable and block saves while retaining the previous deck. Rendering may
   show only seven slots; read-only guards and the store prevent an over-limit/unprojectable deck
-  from being overwritten by that display subset. M3.1 changes media geometry only; the configuration
-  protocol and editor remain unchanged.
+  from being overwritten by that display subset. M3.2.1 extends configuration/editor only;
+  the accepted M3.1 geometry and existing execution paths remain unchanged.
   An already-loaded pre-M2.5 page omits `expected` and cannot save to the new server; reload before
   the first post-cutover edit. This compatibility refusal does not authorize production cutover.
 - **Networking:** bare `XMLHttpRequest` wrapper (no `fetch`), form-encoded bodies, token
@@ -527,9 +543,8 @@ One file: inline CSS, markup and one ES5 IIFE. No framework or build step.
 - **Views:** `deck` (8 keys + now playing + Internet + Batteries), `phone` (camera/mic
   streaming), plus three sheets: Take note, app editor, token login.
 - **Extension reality (today):** keys are 7 app slots plus one hardcoded "Take note" key;
-  widgets are hardcoded cards whose geometry lives in `layout()`. Adding either means
-  editing the layout arithmetic. M3.1 is a bounded media-layout slice; the broader ADR-010
-  data-driven work remains planned within M3.
+  the two existing widgets have configured visibility and a fixed descriptor list; geometry stays
+  in `layout()`. Broader ADR-010 data-driven controls/layout remain planned within M3.
 
 ## 12. Known architectural limitations
 
@@ -538,7 +553,7 @@ These are structural, not bugs to fix in passing:
 1. One migrated action. `ActionRegistry` exists, but `app.launch` is its only registered
    action; every other verb is still a `case` in one `switch`, so a new capability costs a
    new endpoint, a new client call and a new key type until it is migrated onto the boundary.
-2. V1 configuration and its store are active, but the ES5 editor still edits an ordered path list,
+2. V2 configuration and its store are active on this branch, but the ES5 editor still edits an ordered path list,
    not arbitrary controls, titles or custom ids. Unprojectable documents and selections above
    seven controls are read-only. Unknown actions remain inert; no new action capability is added.
    Frozen `launcher.json` is a compatibility/recovery artifact, not a second writable source.
@@ -564,7 +579,7 @@ Production cutover is complete; the remaining capabilities below are planned.
 | Seam | Milestone | Shape |
 |---|---|---|
 | **Action boundary** | M2 (foundational) — `app.launch` implemented and accepted in M2.3 | An internal representation of an approved action — identifier, display metadata, validated parameters, server-side execution allowlist. `ActionRegistry` now carries this for app launch only; Shortcuts, developer and Git actions become implementations of it in later slices. No arbitrary shell execution. |
-| **Versioned configuration** | M2.4 codec and M2.5 S1–S7 complete and accepted | V1 is active through `ConfigurationStore` and the shared launcher handler. Source-aware migration preserves frozen legacy bytes; canonical revisions, locking, atomic replacement, backup and verified recovery protect edits. The ES5 client consumes state and refreshed revisions but remains a seven-slot path-list editor. Decoding or storing a path confers no execution authority. See §7 and §10; S7 production cutover is accepted. |
+| **Versioned configuration** | M2.4 codec and M2.5 S1–S7 complete and accepted | V2 is implemented on this branch through `ConfigurationStore` and the shared launcher handler (ADR-017), pending acceptance; production remains M3.1/V1. Source-aware migration preserves frozen legacy bytes; canonical revisions, locking, atomic replacement, backup and verified recovery protect edits. The ES5 client consumes state and refreshed revisions but remains a seven-slot path-list editor. Decoding or storing a path confers no execution authority. See §7 and §10; S7 production cutover is accepted. |
 | **Ingress / auth hardening** | M2.1 admission and M2.2 resource bounds implemented; remaining M2 → M5 | Bounded headers/body, early query-token auth, receive/auth deadlines, connection/media caps and bounded frame/audio buffering. M2.2 passed independent review and Steering acceptance. Action authorization exists for app launch (M2.3, accepted); the remaining routes and the unscoped token belong to M5's independent T3 assessment and hardening. |
 | **Collector boundary** | Just-in-time with M4 telemetry | Registry of collectors (each with its own queue) composed into one snapshot, so Git/agent status does not edit the route table. |
 | **Frontend data model** | M3 | Data-driven controls and widgets, layout described rather than hand-computed — while staying one ES5 file with no framework. |

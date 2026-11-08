@@ -783,3 +783,81 @@ Nonblocking documentation debt carried forward: `AGENTS.md` §2 still has no `Co
 row and now also needs one for `ConfigurationStore.swift`. That file is protected against agent
 edits in this workflow, so both rows need a human edit. `docs/ARCHITECTURE.md` §3 carries the
 equivalent rows.
+
+---
+
+## ADR-017 — Two configurable widgets in Configuration V2
+
+**Status:** Architecture approved by Steering · 2026-11-08 · Target: M3.2.1.
+Implementation acceptance and production cutover remain separate decisions. This extends
+ADR-010/015/016; the accepted V1 rules remain the rules for V1 documents.
+
+**Decision.** `config.json` now supports the strict V2 shape
+`{"version":2,"controls":[…],"widgets":{"internet":true,"batteries":true}}`.
+The complete V1 controls schema is reused unchanged. Both widget keys are required JSON
+booleans; unknown keys, duplicate names, malformed input and unsupported versions fail closed.
+The existing strict scanner, exact-number handling, canonical byte cap and verified encoding
+apply to both versions. Preferences describe visibility and grant no execution authority.
+
+V1→V2 copies every control, identity, order, parameter and title, without catalog filtering,
+normalization or reconstruction from paths. Both widgets default to visible. Promotion happens
+on read, with the existing non-blocking lock, locked re-read, atomic replacement, retained base,
+post-commit equality check and verified recovery. A valid V1 whose expanded V2 exceeds the cap
+remains untouched and read-only (`unrepresentable`). Over-limit and metadata-bearing documents
+can migrate losslessly but remain read-only in the path-list editor. Legacy arrays migrate to
+V2 through the existing lossless V1 conversion; `launcher.json` stays frozen.
+
+Before replacing an existing V1, the store retains its **byte-exact** first generation as
+`config.json.v1`, independently of rotating `config.json.prev`. It writes and syncs a 0600
+temporary, publishes it with a no-replace hard link and verifies its bytes. An existing valid
+V1 snapshot is never overwritten; malformed, unreadable or non-regular snapshot paths block
+promotion. Filesystems unable to publish this snapshot safely also block promotion. Subsequent
+V1 bases are retained by `.prev`, while `.v1` continues to identify the first cutover generation.
+
+GET and successful POST `/launcher` share the existing response plus `widgets` (two booleans,
+or `null` if preferences cannot be determined). Ready V2 reports `configuration: "v2"`;
+successful migration reports `migrated`. Status/refusal behavior otherwise remains unchanged.
+Revisions fingerprint the entire canonical V2 denotation, so controls and widgets share one
+concurrency boundary and V1/legacy promotion does not invalidate a revision issued by this build.
+A previously loaded M3.1 page may receive `409 stale` after promotion and must reload.
+
+POST accepts form fields `internet` and `batteries`: both absent preserves current flags;
+both present requires exactly `0` or `1`; partial/invalid pairs return `400 invalid-widgets`
+before any store operation. With both flags present and both `n` and `paths` absent, only
+widgets change; otherwise existing selection parsing applies. Changes are assembled from the
+locked current document after the revision check. Visibility-only writes preserve controls;
+application-only writes preserve flags. The existing read-only guard refuses all writes to
+unprojectable metadata rather than flattening it. No endpoint, action type, execution path,
+framework or dependency is added; `ActionRegistry` remains the app execution authority.
+
+The existing ES5 long-press editor gains two labeled checkboxes and retains Save/Cancel.
+Preferences apply only after successful Save, persist on the Mac, and survive browser and
+Home Screen storage separation. A fixed two-entry descriptor list controls `display` only;
+geometry, polling, music, app keys, Claude, Phone and status remain unchanged. A new page
+without a widget-capable server response fails closed for saving. Broader ADR-010 layout work
+and generalized widget/plugin systems are outside this slice.
+
+**Rollback.** No automatic downgrade, `.prev` adoption or legacy fallback is introduced.
+M3.1 reports V2 as `unsupported-version` and refuses saves. The pure, explicit
+`ConfigurationMigrator.exportV1` validates V2 and returns a verified V1 encoding of **all latest
+controls**, including custom IDs, titles and inert unknown-action parameters; only widget
+preferences are intentionally omitted. Export is not a new HTTP operation.
+
+For a separately authorized deployment, first preserve an operator-owned byte-exact V1 snapshot
+outside the live directory and verify the six current selections; the runtime `.v1` snapshot is
+an additional safeguard, not permission to inspect production during implementation. For a
+separately authorized rollback: stop V2 writers, retain the latest V2 bytes, export and validate
+latest controls, atomically restore the verified V1 as `config.json`, then start M3.1 and reload
+the iPhone page. Verify all six selections and launch boundaries. A valid metadata-bearing V1
+remains read-only in M3.1, as before. Restoring the initial `.v1` snapshot instead loses later
+app edits and is an explicit recovery choice, never the default latest-controls rollback.
+Neither export nor restoration is performed on production in M3.2.1.
+
+**Validation gate.** Strict codec, four visibility combinations, complete metadata migration,
+wire refusal/no-write behavior, cross-field preservation, stale/concurrent writes, failed-write
+recovery, snapshot retention and rollback must pass in isolation, alongside ES5 parsing,
+browser interaction checks, relevant regressions and a warning-free release build. One focused
+independent review covers codec/store/wire integrity and rollback. Physical iPhone 11 acceptance
+must verify Save/Cancel, all four combinations and re-enable, reload, server restart, Home Screen,
+portrait/landscape and existing apps/Claude/media/Phone/status. Automated browser checks do not
+establish physical acceptance. No production deployment or merge is authorized by this ADR.

@@ -73,6 +73,11 @@
     padding: 4px 8px; text-align: center; white-space: normal; }
   #editSave[aria-disabled="true"] { opacity: .4; }
 
+  #widgetChoices { position: absolute; top: 44px; left: 12px; right: 10px; border: 0; padding: 0; margin: 0; }
+  #widgetChoices legend { color: #aeaeb2; font-size: 10px; }
+  #widgetChoices label { display: inline-block; min-height: 44px; padding: 10px 12px 10px 0; box-sizing: border-box; }
+  #widgetChoices input { width: auto; height: auto; margin: 0 5px 0 0; padding: 0; }
+
   /* ---- widgets ---- */
   .card { position: absolute; border-radius: 18px; box-sizing: border-box; padding: 11px 12px; overflow: hidden;
     background: rgba(255,255,255,.065); box-shadow: inset 0 0 0 .5px rgba(255,255,255,.12); }
@@ -173,8 +178,8 @@
   #filter { position: absolute; left: 10px; right: 150px; top: 10px; height: 28px; box-sizing: border-box; border: 0; border-radius: 9px;
     background: #2c2c2e; color: #fff; padding: 0 10px; font-size: 13px; outline: none; -webkit-user-select: text; }
   #edit .btns { position: absolute; right: 10px; top: 10px; margin: 0; }
-  #editCount { position: absolute; left: 12px; top: 44px; font-size: 10px; color: #8e8e93; }
-  #editList { position: absolute; left: 6px; right: 6px; top: 60px; bottom: 0; overflow-y: scroll; -webkit-overflow-scrolling: touch; }
+  #editCount { position: absolute; left: 12px; top: 110px; font-size: 10px; color: #8e8e93; }
+  #editList { position: absolute; left: 6px; right: 6px; top: 128px; bottom: 0; overflow-y: scroll; -webkit-overflow-scrolling: touch; }
   .erow { height: 34px; position: relative; border-bottom: .5px solid rgba(255,255,255,.08); }
   .erow img { position: absolute; left: 30px; top: 4px; width: 26px; height: 26px; }
   .erow .nm { position: absolute; left: 64px; right: 40px; top: 9px; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -258,6 +263,11 @@
   <!-- Choose the 7 apps -->
   <div id="edit" class="scrim">
     <div class="sheet">
+      <fieldset id="widgetChoices">
+        <legend>Widgets</legend>
+        <label><input id="editInternet" type="checkbox"> Internet</label>
+        <label><input id="editBatteries" type="checkbox"> Batteries</label>
+      </fieldset>
       <input id="filter" placeholder="Search apps" autocorrect="off" autocapitalize="none">
       <div class="btns"><div class="btn primary" id="editSave">Save</div><div class="btn" id="editCancel">Cancel</div></div>
       <div id="editCount"></div>
@@ -439,7 +449,13 @@
   setInterval(tick, 10000);
 
   // ---------- keys ----------
-  var launcher = { selected: null, all: [] };
+  var launcher = { selected: null, all: [], widgets: null };
+  var WIDGET_CARDS = [{ preference: 'internet', id: 'net' }, { preference: 'batteries', id: 'bat' }];
+  function applyWidgets() {
+    WIDGET_CARDS.forEach(function (card) {
+      $(card.id).style.display = launcher.widgets && launcher.widgets[card.preference] === false ? 'none' : '';
+    });
+  }
   var cfg = { state: 'unreachable', writable: false, revision: '', text: '' };
   var CFG_TEXT = {
     'malformed': 'Config file is damaged. Keys are read-only until it is fixed on the Mac.',
@@ -462,11 +478,14 @@
     w.textContent = cfg.text;
     w.style.display = cfg.text ? 'block' : 'none';
     $('editSave').setAttribute('aria-disabled', cfg.writable ? 'false' : 'true');
+    $('editInternet').disabled = $('editBatteries').disabled = !cfg.writable;
   }
   function readConfig(text) {
     var d;
     try { d = JSON.parse(text); } catch (e) { return null; }
     if (!d || !Array.isArray(d.all) || (d.selected !== null && !Array.isArray(d.selected))) return null;
+    if (d.widgets != null && (!d.widgets || typeof d.widgets.internet !== 'boolean' || typeof d.widgets.batteries !== 'boolean')) return null;
+    if (d.writable && !d.widgets) return null;
     return d;
   }
   // A notepad with a pencil: quick capture that becomes a Claude conversation.
@@ -484,6 +503,7 @@
       if (!d) { applyConfig({ configuration: 'unreachable', writable: false }); return; }
       launcher = d;
       applyConfig(d);
+      applyWidgets();
       renderKeys();
     });
   }
@@ -525,6 +545,8 @@
   var draft = [];
   function openEditor() {
     draft = (launcher.selected || []).slice(0, APP_SLOTS);
+    $('editInternet').checked = !launcher.widgets || launcher.widgets.internet;
+    $('editBatteries').checked = !launcher.widgets || launcher.widgets.batteries;
     $('filter').value = '';
     sheet('edit', true);
     renderEditor();
@@ -561,7 +583,9 @@
     if (!cfg.writable) return toast(cfg.text || 'Keys are read-only');
     var body = 'n=' + draft.length
              + '&paths=' + encodeURIComponent(draft.join('\n'))
-             + '&expected=' + encodeURIComponent(cfg.revision);
+             + '&expected=' + encodeURIComponent(cfg.revision)
+             + '&internet=' + ($('editInternet').checked ? '1' : '0')
+             + '&batteries=' + ($('editBatteries').checked ? '1' : '0');
     xhr('POST', url('/launcher'), body, function (s, text) {
       if (s !== 200) return toast(saveError(s, text));
       var d = readConfig(text);
@@ -571,7 +595,8 @@
       }
       launcher = d;
       applyConfig(d);
-      renderKeys(); sheet('edit', false); toast('Keys saved');
+      applyWidgets();
+      renderKeys(); sheet('edit', false); toast('Deck saved');
     });
   });
   applyConfig({ configuration: 'unreachable', writable: false });

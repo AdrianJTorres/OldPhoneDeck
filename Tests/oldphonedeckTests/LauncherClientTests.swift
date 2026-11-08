@@ -67,7 +67,35 @@ final class LauncherClientHarness {
 }
 
 @Suite struct LauncherClientTests {
-    private let ready = #"{"selected":["/A.app"],"all":[{"name":"A","path":"/A.app"}],"configuration":"v1","writable":true,"revision":"revision-a"}"#
+    private let ready = #"{"selected":["/A.app"],"all":[{"name":"A","path":"/A.app"}],"configuration":"v2","widgets":{"internet":true,"batteries":true},"writable":true,"revision":"revision-a"}"#
+
+    @Test func widgetDraftCancelAndSaveUseTheAuthoritativeResponse() throws {
+        let client = try LauncherClientHarness()
+        try client.run("loadKeys()")
+        try client.reply(ready)
+        try client.run("openEditor(); $('editInternet').checked = false; $('editBatteries').checked = false; $('editCancel').tap()")
+        #expect(try client.run("$('net').style.display").toString() == "")
+        #expect(try client.run("$('bat').style.display").toString() == "")
+        #expect(try client.run("requests.length").toInt32() == 0)
+        try client.run("openEditor()")
+        #expect(try client.run("$('editInternet').checked && $('editBatteries').checked").toBool())
+        try client.run("$('editInternet').checked = false; $('editSave').tap()")
+        #expect(try client.run("requests[0].body.indexOf('&internet=0&batteries=1') >= 0").toBool())
+        #expect(try client.run("$('net').style.display").toString() == "")
+        try client.reply(ready.replacingOccurrences(of: #""internet":true"#, with: #""internet":false"#))
+        #expect(try client.run("$('net').style.display").toString() == "none")
+        #expect(try client.run("$('bat').style.display").toString() == "")
+        #expect(try client.run("$('keys').children.length").toInt32() == 8)
+    }
+
+    @Test func oldServerWithoutWidgetSupportCannotReceiveAnAccidentalSave() throws {
+        let client = try LauncherClientHarness()
+        try client.run("loadKeys()")
+        try client.reply(#"{"selected":["/A.app"],"all":[],"writable":true,"revision":"old"}"#)
+        try client.run("openEditor(); $('editSave').tap()")
+        #expect(try client.run("requests.length").toInt32() == 0)
+        #expect(try client.run("$('editInternet').disabled && $('editBatteries').disabled").toBool())
+    }
 
     @Test func startsReadOnlyUntilAConfigurationArrives() throws {
         let client = try LauncherClientHarness()
