@@ -1,17 +1,17 @@
 # ARCHITECTURE.md — PhoneDeck
 
-Architecture reference for coding agents. Describes **current behavior**, including
-M2.1 bounded HTTP admission, M2.2 media/resource limits and the M2.3 approved-action
-boundary, and explicitly labelled **planned** extension seams. The upstream baseline is
-`e622184`; no slice is completion of M2 or the M5 review. M2.2 passed independent review
-and targeted iPhone 11 camera acceptance and was accepted by Steering; physical audio and
-continuous live MJPEG were not verified. M2.3 passed initial and focused independent review and was **accepted by Steering on
-2026-11-06**. No physical iPhone 11 test was claimed for the M2.3 slice. M2.4 (Configuration V1
-codec, ADR-015) passed a final independent Codex review and was **accepted by Steering on
-2026-11-06**: `Configuration.swift` exists as a pure, **unwired** codec, so runtime configuration
-behaviour is unchanged and still described by §10 and `Launcher`. No physical iPhone 11 test was
-claimed for the M2.4 slice either, and no runtime migration occurred. Storage integration and the
-read-path cutover are M2.5, which is not started.
+Architecture reference for M2.5 on `m2.5/s1-configuration-store` (S1–S4 code at `d0d8747`).
+The upstream baseline is `e622184`. M2.1–M2.4 and M2.5 S1–S7 are accepted by Steering;
+**M2.5 is COMPLETE (2026-11-08)**. The V1 codec (ADR-015), active `ConfigurationStore` and
+revision-aware ES5 client (ADR-016) are wired end to end.
+`Launcher.selected()` / `Launcher.save()` are retired.
+
+Steering confirms **PASS** for production migration/cutover, rollback rehearsal, production
+authentication rotation and physical iPhone 11 acceptance. New authenticated access works on the
+physical iPhone 11 and the previous token is rejected. Phase A is complete; these are recorded
+acceptance results, not operations performed by the Phase B documentation consolidation.
+M2.2 physical audio and continuous live MJPEG remain unverified; M2.5 does not close those gaps
+or the M5 review.
 
 - Current behavior: §1–§8, §10–§11
 - Known limitations: §12
@@ -61,8 +61,11 @@ Design consequences worth knowing:
 `main.swift` is top-level code — no `@main`, no app delegate. It builds everything in
 order and then blocks in `NSApplication.run()`:
 
-1. `Options` parses `--port` (default `8045`) and `--mic-device` (default `BlackHole`).
-2. `loadToken()` reads or creates `~/.oldphonedeck/token`.
+1. `Options` parses `--port` (default `8045`), `--mic-device` (default `BlackHole`) and
+   `--config-dir` (default `~/.oldphonedeck`). An explicit directory is resolved and created
+   before services start; invalid or unusable values exit instead of falling back.
+2. `LocalTLS` uses that directory; `ConfigurationStore(directory:)` is constructed without
+   loading or migrating a file. `loadToken()` reads or creates its `token`.
 3. `NSApplication.shared` with `.accessory` activation policy (no Dock icon, no menu bar).
 4. `HTTPServer(port:)` binds the HTTP listener; failure here is fatal (`exit(1)`).
 5. `PhoneMediaServer` + `AudioOut` are constructed; `AudioOut` may return `nil` if no
@@ -86,17 +89,19 @@ binary, stop it with Ctrl-C.
 | `Package.swift` | — | One executable plus a Swift Testing target; copies `web/`, links AppKit | — |
 | `main.swift` | — | Options, token, LAN address, application admission/route wiring, startup | `Options`, `loadToken`, `lanAddress`, `admission`, `routes` |
 | `HTTPServer.swift` | — | Bounded receive/deadlines, one request per connection, responses, MJPEG | `HTTPConnection`, `HTTPServer` |
-| `HTTPParsing.swift` | — | Incremental framing; application route metadata and admission | `HTTPRequestParser`, `HTTPRequestHead`, `HTTPRequest`, `HTTPFailure`, `DeckRoute` |
+| `HTTPParsing.swift` | — | Incremental framing; route metadata, admission and pure parameter validation, including launcher selection syntax | `HTTPRequestParser`, `HTTPRequestHead`, `HTTPRequest`, `HTTPFailure`, `DeckRoute` |
 | `ResourceLimits.swift` | — | Explicit HTTP/media budgets, message validation, frame handoff, audio accounting | `HTTPConnectionBudget`, `MediaSessionBudget`, `PhoneMediaMessage`, `LatestFrameHandoff`, `AudioQueueBudget` |
 | `ActionRegistry.swift` | — | Approved-action boundary: identifier syntax, server-authored metadata, typed parameters, authorization, controlled execution, shared `POST /launch` handler | `ActionID`, `ActionKind`, `ActionDescriptor`, `ActionParameters`, `AppLaunchParameters`, `ActionOutcome`, `ActionRegistry`, `AppLaunchExecutor`, `AppLaunchAdapter`, `AppLaunchRoute` |
-| `Configuration.swift` | — | Configuration V1 codec (M2.4, **unwired**): document model, strict RFC 8259 scanner, exact-integer number reading, canonical form shared by both directions, pure decode/encode, in-memory legacy migration. No file I/O, no `Apps`, no executor | `ControlID`, `ControlPresentation`, `ControlParameters`, `DeckControl`, `DeckConfigurationV1`, `ConfigurationError`, `ConfigurationInput`, `ConfigurationState`, `ConfigurationJSONValue`, `ConfigurationJSONScanner`, `ExactJSONNumber`, `ConfigurationCanonicalForm`, `ConfigurationDecoder`, `ConfigurationEncoder`, `ConfigurationMigrator` |
-| `Tests/oldphonedeckTests/` | — | Swift Testing parser/resource, action-boundary, configuration-codec and HTTP/WS/WSS/TLS socket tests; no app startup | Parsing, lifecycle, budget, handoff, audio, action, launch-route and codec tests |
+| `Configuration.swift` | — | Active pure V1 codec (ADR-015), used by the store: strict JSON, exact integers, shared canonical form, encode/decode and lossless in-memory migration. No file I/O, `Apps` or executor | `ControlID`, `ControlPresentation`, `ControlParameters`, `DeckControl`, `DeckConfigurationV1`, `ConfigurationError`, `ConfigurationInput`, `ConfigurationState`, `ConfigurationJSONValue`, `ConfigurationJSONScanner`, `ExactJSONNumber`, `ConfigurationCanonicalForm`, `ConfigurationDecoder`, `ConfigurationEncoder`, `ConfigurationMigrator` |
+| `ConfigurationStore.swift` | — | Active storage (ADR-016): source precedence, bounded regular-file reads, revision, non-blocking lock, migration-on-read, atomic replacement, backup and recovery | `ConfigurationStore`, `ConfigurationStorePolicy`, `ConfigurationRead`, `ConfigurationRevision`, `ConfigurationFileOperations`, `POSIXConfigurationFile`, `ConfigurationWriteOutcome` |
+| `LauncherRoute.swift` | — | Shared GET/POST handler, pure selection parser, response shape and refusal mapping; used by the application and loopback tests | `LauncherRoute.handle/parseSelection/responseJSON/refusal` |
+| `Tests/oldphonedeckTests/` | — | Swift Testing parser/resource, action-boundary, configuration-codec, configuration-storage and HTTP/WS/WSS/TLS socket tests; no app startup | Parsing, lifecycle, budget, handoff, audio, action, launch-route, codec, store classification/revision/persistence/failure-injection and filesystem-platform tests |
 | `TLS.swift` | — | Private CA, server cert, PKCS#12 identity, TLS/WS parameters | `LocalTLS.identity/makeCA/makeServerCert/loadIdentity/parameters` |
 | `PhoneMedia.swift` | — | Bounded WSS ingest/lifecycle, latest-frame cache, audio playback | `PhoneMediaServer`, `MediaWebSocketConnection`, `AudioOut` |
-| `Control.swift` | 116 | App enumeration/icons/launch, launcher config, Claude deep link, synthetic keys | `Input`, `Apps`, `Launcher`, `Claude` |
+| `Control.swift` | — | App enumeration/icons/launch, Claude deep link, synthetic keys; no selection persistence | `Input`, `Apps`, `Claude` |
 | `Music.swift` | 109 | Now-playing + transport via AppleScript, artwork fetch | `Music` |
 | `Stats.swift` | 166 | Net throughput, speed test, batteries, `Process` helper | `Stats` |
-| `web/index.html` | 797 | Entire UI: inline CSS, ES5 IIFE, layout, polling, WS client | `fit`, `layout`, `renderKeys`, `pollStats`, `wsOpen` |
+| `web/index.html` | — | Entire UI: inline CSS, ES5 IIFE, revision-aware configuration editor, layout, polling, WS client | `fit`, `layout`, `renderKeys`, `applyConfig`, `readConfig`, `saveError`, `pollStats`, `wsOpen` |
 
 Production module boundaries are **files, not separate library targets**: there is one
 executable target and a dependent Swift Testing target; production types remain internal.
@@ -111,8 +116,8 @@ Treat the file split as the intended boundary anyway —
 | `8047` (`--port + 2`) | HTTPS | Same route table over TLS | Only starts if a TLS identity was produced |
 | `8048` (`--port + 3`) | WSS | Camera frames + mic audio | Token sent as the first binary message |
 
-Clients derive the ports from the page they loaded: `https = port + 2`,
-`wss = port + 3` (`index.html`).
+The client recovers the HTTP base port from the page: for HTTPS subtract 2 from the page port;
+for HTTP use it directly. HTTPS is base + 2 and WSS is base + 3 (`index.html`).
 
 ## 5. Request flow
 
@@ -146,7 +151,9 @@ Admission order:
 4. Unsupported method on a known public/authenticated path → `405`.
 5. Body-bearing POSTs require Content-Length (`411`); excessive declared lengths → `413`.
 6. Collect exactly the declared admitted body. Incomplete requests never invoke handlers.
-   Decoded launch/Claude parameter checks run before their side effects.
+   Decoded launch/Claude checks and POST `/launcher` selection syntax run through
+   `DeckRoute.validateParameters` before side effects; shared handlers re-run validation.
+   Launcher state and revision checks remain in the store under its lock (§7).
 
 **Limits:** request line 4 KiB (excluding CRLF), total headers 16 KiB (including request
 line and CRLFCRLF), 64 header fields, individual header line 4 KiB (excluding CRLF).
@@ -227,7 +234,8 @@ registry, and maps the outcome onto the historical response shape: the server na
 ## 6. Authentication flow
 
 - A 12-character token is minted from a 31-character alphabet on first run and stored in
-  `~/.oldphonedeck/token` (mode `0600`). Deleting the file rotates it.
+  the selected configuration directory's `token` (default `~/.oldphonedeck/token`, mode `0600`).
+  Deleting the file rotates it.
 - The deck URL carries `#k=<token>` in the **fragment**, which the browser does not send
   to the server; the client copies it to `localStorage` and appends `?k=<token>` to every
   API request.
@@ -275,14 +283,14 @@ apply before handlers (see §5).
 | Method | Path | Auth | Purpose | Input | Output | Side effects |
 |---|---|---|---|---|---|---|
 | GET | `/oldphonedeck.mobileconfig` | — | iOS profile containing the CA | — | plist (`application/x-apple-aspen-config`) | none |
-| GET | `/`, `/index.html` | — | Page shell | — | HTML (45,587 B) | bundle read |
+| GET | `/`, `/index.html` | — | Page shell | — | HTML | bundle read |
 | GET | `/info` | yes | Liveness / camera status | — | `{camera: bool}` | none |
 | GET | `/stats` | yes | All widget data | — | `{net, speed, batteries, mac, music}` | none (blocks the HTTP queue briefly) |
 | POST | `/speedtest` | yes | Run a speed test | — | `ok` | spawns `networkQuality` (~20 s) |
 | POST | `/media` | yes | Transport control | `cmd` = `playpause`\|`next`\|`previous`\|`open` | `ok` | AppleScript to the player |
 | GET | `/artwork` | yes | Album art | `id` (currently ignored) | JPEG or `404` | none |
-| GET | `/launcher` | yes | App list + selection | — | `{selected: [path]\|null, all: [{name,path}]}` | directory scan |
-| POST | `/launcher` | yes | Persist key selection | `paths` (newline-separated) | `{saved: n}` or `500` | writes `launcher.json`; unknown paths dropped |
+| GET | `/launcher` | yes | Catalog, selection and configuration state | — | Shared launcher JSON (below), including degraded states | catalog scan; may migrate legacy data into `config.json` |
+| POST | `/launcher` | yes | Save selection with optimistic concurrency | `n`, `paths`, `expected` | Shared launcher JSON + `saved`, or fixed error token | locked atomic write to `config.json`; retains one backup; never filters paths |
 | GET | `/icon` | yes | App icon | `path` | PNG or `404` | renders + caches on main thread |
 | POST | `/launch` | yes | Open an app through the action boundary | `path` | `ok` or `404` | app launch dispatched to the main queue (`ok` = accepted, not activated) |
 | POST | `/claude` | yes | New Claude chat / focus | `text`, `send=1` | `ok` | opens `claude://`; may press Return |
@@ -290,10 +298,59 @@ apply before handlers (see §5).
 | GET | `/camera.jpg` | yes | Latest frame | — | JPEG (may be empty) | none |
 | — | `wss://host:<port+3>/` | handshake message | Camera + mic ingest | `'H'`+token, then `'V'`/`'A'` | none | updates frame cache; plays audio |
 
-The wire API is unchanged by M2.3: the same method, path, parameters, statuses and bodies.
-`POST /launch` is the **only** route that goes through `ActionRegistry`; `/media`, `/claude`,
-`/speedtest`, `/launcher` and `/icon` still validate and act inline in the route switch and
-are migrated only by a later, explicit slice.
+`POST /launch` remains the **only** route through `ActionRegistry`; its wire API is unchanged.
+`/launcher` now uses `LauncherRoute.handle` and `ConfigurationStore`, which store data without
+granting execution authority. `/media`, `/claude`, `/speedtest` and `/icon` remain outside the
+registry; the other action-shaped capabilities require explicit later migration.
+
+**Launcher response and request contract (ADR-016).** Authenticated GET returns `200` even in a
+degraded configuration state. GET and successful POST always include `selected` (full path list or
+`null`), `all` (the Mac's `{name,path}` catalog), `configuration` (fixed status token) and `writable`.
+`revision` is an opaque token, absent on `migrating`; `version` appears only for
+`unsupported-version`. Successful POST adds `saved`, the number of stored entries, and supplies
+the refreshed revision so another edit needs no GET. `[]` is an empty selection; `null` is not a
+replacement deck and can also mean unconfigured or unprojectable data.
+
+`configuration` values are `v1`, `migrated`, `migrating`, `legacy-pending`, `unconfigured`,
+`unrepresentable`, `too-many-controls`, `legacy-readonly`, `malformed`, `unsupported-version`,
+`unreadable`, `wrong-format` and `corrupt` (`ConfigurationStatusToken`).
+
+POST is form-encoded. Present `n` must be canonical unsigned decimal `0`–`7`; `n=0` requires empty
+`paths`. For `n>=1`, split newline-separated `paths` preserving empties and require exactly `n`
+entries, each at most 4096 UTF-8 bytes. Thus `n=1&paths=` stores one empty path. Absent `n` retains
+legacy splitting that omits empty entries; store bounds still apply. `expected` echoes the last
+revision. Refusal order is syntax/product bounds before I/O, lock acquisition, locked state
+classification, missing/empty revision, then stale revision. Damaged data therefore reports its
+state before a missing-revision refusal.
+
+| HTTP status | Plain-text refusal token |
+|---|---|
+| `400` | `invalid-count`, `count-mismatch`, `entry-too-long`, `too-many-keys`, `missing-revision` |
+| `409` | State token (for example `malformed`, `unrepresentable`, `too-many-controls`), or `stale` |
+| `503` | `busy` (lock contention or inability to acquire a safe lock) |
+| `500` | `write-failed`, `migration-failed`, `recovery-failed` |
+
+Ingress/authentication failures retain §5's statuses. Error tokens contain no document content.
+
+**Active store.** `main.swift` injects the selected configuration directory into the shared handler
+for both HTTP and HTTPS. Every operation reclassifies disk state. `config.json` takes precedence;
+only its absence allows `launcher.json` to be consulted, never its damage or unsupported version.
+GET migrates decodable legacy data under a non-blocking exclusive lock, using the classification
+re-read under that lock; the original `launcher.json` remains byte-intact. Contended migration
+returns the legacy selection as `migrating`, read-only and without a revision.
+
+Writes require a projectable, writable state and matching revision under the lock. They preserve
+order, duplicates, empty entries and uninstalled paths. Over-limit or unprojectable V1 documents,
+damaged/unsupported/wrong-format files and unrepresentable legacy data refuse writes. Projectable
+over-limit data is served in full, never truncated on disk. A legacy array above the codec's
+4096-control guard instead reports `malformed` with `selected: null`; its bytes remain untouched.
+
+Commit prepares a `0600` same-directory temporary, writes and `fsync`s it, safely replaces
+`config.json.prev` with the base generation, then atomically renames the new document into place.
+Post-commit read/decode must equal the intended value. Failed verification restores the base bytes
+captured under the lock, not an older backup. An initial migration has no base; failed verification
+retains the damaged document and frozen legacy evidence and reports failure. Ordinary reads do not
+automatically restore `.prev` or fall back to legacy data.
 
 ## 8. macOS integrations
 
@@ -319,19 +376,31 @@ and on macOS 15 the Local Network prompt. On the phone: camera, microphone, spee
 recognition, and trust for the OldPhoneDeck CA.
 
 **External applications and schemes:** Claude desktop (`com.anthropic.claudefordesktop`,
-`claude://`), Spotify, Apple Music, any app in the four scanned directories, BlackHole 2ch
+`claude://`), Spotify, Apple Music, any app in the five scanned directories, BlackHole 2ch
 (audio), OBS (consumer of `/camera.mjpg`).
 
 ## 9. Current security boundaries (and known risks)
 
 **What the design does provide:** a token on every API call, an app-path allowlist before
-launch or icon rendering (`Apps.isKnown`), re-filtering of config on save, no HTML
+launch or icon rendering (`Apps.isKnown`), no HTML
 injection (dynamic text goes through `textContent`), no user-controlled argv in any
 `Process`, fixed absolute binary paths, frame-drop backpressure on both media paths,
 `0600` on the token and CA key, and — since M2.3, accepted — one typed action
 boundary that resolves a server-authored identifier, validates parameters and authorizes
 against the Mac's own app catalog before a controlled executor runs. That boundary covers
 app launch only; the other action-shaped routes still validate inline in the switch.
+
+**Configuration boundary (M2.5, accepted and cut over to production).** Saving no longer applies
+`Apps.isKnown`: preservation is not authorization (ADR-016 rule 11). Every launch still passes
+the registry's fresh catalog check. Regular-file checks with `O_NOFOLLOW | O_NONBLOCK`, bounded
+reads (1 MiB plus a detection byte), non-blocking advisory locking and locked revision comparison
+protect the store's intended boundary; they do not defend against an arbitrary local writer.
+Revisions fingerprint canonical content, so whitespace-only changes and lossless migration do not
+invalidate a client. The 64-bit fingerprint is concurrency control, not authentication or integrity.
+
+The M1 absent/unparseable configuration finding is **closed**: the shared
+GET response distinguishes absence, damage, unsupported versions and read-only states, and the ES5
+page displays a warning and blocks saves. S7 production migration/cutover is accepted by Steering.
 
 **Open risks carried from M1.** Each risk is owned by a milestone, and ownership is not
 interchangeable:
@@ -361,28 +430,36 @@ MEDIUM
 |---|---|
 | Response-send, stalled-MJPEG-send, pre-ready WS handshake and authenticated WS idle timeouts remain deferred to **M5**. Resource counts are bounded; stalled clients can still occupy the available slots. | `HTTPServer.swift`, `PhoneMedia.swift` |
 | `server.key` and `server.p12` are `0644`; PKCS#12 password hardcoded; CA downloadable unauthenticated | `TLS.swift`, `/oldphonedeck.mobileconfig` |
-| Configuration **at runtime** is still a bare `[String]` with no version; unparseable and absent are indistinguishable. M2.4 adds an unwired V1 codec that distinguishes absent, unreadable, legacy, V1, malformed and unsupported (ADR-015); this finding closes only when **M2.5** wires it into the read path | `Launcher.selected()`, `Configuration.swift` |
+| Atomic visibility is not complete power-loss durability: file `fsync` is required, directory sync is best-effort, no `F_FULLFSYNC`. `.prev` retains only one generation; frozen legacy data cannot recover post-migration edits. A downgrade sees only the pre-migration selection. | `ConfigurationStore`, ADR-016 |
 | Frontend geometry and `APP_SLOTS` are hardcoded | `index.html` `layout`, `renderKeys` |
 | One serial queue serves both listeners; full app-directory rescan per icon/launch request | `HTTPServer.queue`, `Apps.list()` |
 | Action authorization compares exact catalog path **strings** and pins no filesystem object. Catalog entries may be symlinks, and the target could change before the asynchronous launch (TOCTOU). Inherited unchanged from the pre-M2.3 route; no HTTP-only exploit identified. Resolution or acceptance is **M5** — see the M2.3 implementation note in `docs/DECISIONS.md`. | `Apps.list/isKnown/launch`, `ActionRegistry.dispatch` |
-| Focused M2.1–M2.3 Swift Testing coverage only; hardware playback and broader regression/CI coverage remain absent | `Tests/oldphonedeckTests`, repository |
+| Parser/resource, action, codec/store, HTTP and client logic have automated coverage; hardware audio playback and CI remain absent. S6 acceptance and S7 production cutover are accepted by Steering; hardware audio remains unverified. | `Tests/oldphonedeckTests`, repository |
 | Accessibility key press is time-based (fixed 2 s delay + frontmost check) | `Claude.ask` |
 | TLS identity is re-issued only at startup, so an IP change degrades to HTTP-only | `LocalTLS.identity` |
 
 Lower-severity findings (non-constant-time token comparison, `try?` swallowing token write
-failures, AppleScript string interpolation, predictable temp artwork path, incomplete
-status-reason map (statuses used by M2.1 are now covered), no auth logging, no Origin
+failures, AppleScript string interpolation, predictable temp artwork path, no auth logging, no Origin
 checks, Swift 5 concurrency annotations)
 are documented in the M1 analysis and remain open.
+The response reason map covers the statuses currently used, including `409 Conflict` added by S3.
 
 ## 10. Local persistence and files outside the repo
 
-Everything is under `~/.oldphonedeck`, plus one temp file:
+The default directory remains `~/.oldphonedeck`; `--config-dir PATH` redirects the token,
+configuration/backup/lock/temporary files and TLS material together. It does not redirect the app
+catalog. `~` and relative paths are resolved and standardized; missing, empty and flag-like values
+are rejected. Newly created configuration directories are `0700`; existing directory modes are
+preserved. The startup banner names the selected directory.
 
 | Path | Written by | Mode | Content |
 |---|---|---|---|
 | `token` | `loadToken` | `0600` | Access code |
-| `launcher.json` | `Launcher.save` | `0644` | Ordered array of app paths (≤7), filtered to installed apps |
+| `config.json` | `ConfigurationStore` migration/save/recovery | `0600` for store-created files | Authoritative V1 document; atomically replaced, never modified in place |
+| `config.json.prev` | `ConfigurationStore` backup swap | Source mode for hard link; `0600` for copy fallback | One base generation, prepared before commit; not auto-adopted on reads |
+| `config.lock` | `ConfigurationStore` lock acquisition | `0600` | Regular, no-follow file; advisory `flock(LOCK_EX \| LOCK_NB)` held across migration/write/recovery |
+| `launcher.json` | No writer in this branch | Existing mode retained | Frozen legacy array, read only when `config.json` is absent; never rewritten or deleted |
+| `config.json.tmp-*`, `config.json.prev.tmp-*` | `ConfigurationStore` | `0600` | Exclusive random same-directory temporaries; operation-owned cleanup, no startup sweep |
 | `tls/ca.key` | `LocalTLS.makeCA` | `0600` | CA private key |
 | `tls/ca.pem`, `ca.csr`, `ca.ext`, `ca.srl` | `LocalTLS.makeCA` | `0644` | CA material |
 | `tls/oldphonedeck-ca.cer` | `LocalTLS.makeCA` | `0644` | DER served as the iOS profile |
@@ -391,13 +468,21 @@ Everything is under `~/.oldphonedeck`, plus one temp file:
 | `tls/server.ip` | `LocalTLS.makeServerCert` | `0644` | LAN IP stamp for re-issue |
 | `$TMPDIR/oldphonedeck-art` | `Music.fetchArtwork` | — | Apple Music artwork relay |
 
+**Isolation (ADR-016 §12).** Use a fresh private directory and explicit `--config-dir`, copy TLS
+material with modes preserved instead of sharing production paths, verify the certificate's LAN
+IP, and let the isolated process mint its own token. The acceptance triple is 8055/8057/8058;
+8057 is a separate browser origin from production 8047. Snapshot production hashes and metadata
+beforehand and verify them at teardown; stop and remove only the owned instance and fixtures.
+S4 completed that preparation/device/teardown sequence successfully. S6 acceptance and S7 production
+cutover/rollback rehearsal are now accepted by Steering; this document performs none of those operations.
+
 In memory only: 60 s of network history, speed-test result, battery list, now-playing
 snapshot, latest camera frame, MJPEG viewer registry, icon cache. Nothing is written
 inside the repository at runtime.
 
 ## 11. Frontend architecture
 
-One file. Inline CSS (~lines 16–240), markup, one IIFE of ES5.
+One file: inline CSS, markup and one ES5 IIFE. No framework or build step.
 
 - **Layout:** `#stage` is a fixed `480×320` design surface, absolutely positioned and
   scaled by a single CSS `transform: scale()` with origin `0 0`. `fit()` computes the
@@ -408,6 +493,18 @@ One file. Inline CSS (~lines 16–240), markup, one IIFE of ES5.
 - **State:** module-scope variables only, plus `localStorage` for `token` and `view`
   (wrapped in try/catch for private mode). App selection lives on the Mac, because
   Safari and the Home Screen app have separate storage.
+- **Configuration:** GET replaces `launcher` with the complete response (`selected` and `all`
+  included). `applyConfig` tracks state, writable and revision, displays fixed text in `#cfgWarn`,
+  and marks Save disabled. The save handler guards read-only states and sends `n`, encoded
+  newline-separated `paths` and `expected`. Successful POST replaces the complete response and
+  refreshes revision before another edit; it does not invent a selection from the local draft.
+  Non-200 saves retain the draft and revision with feedback for stale/missing revision, busy,
+  unreachable and failed-write states. Failed/malformed GET or malformed successful POST responses
+  mark configuration unreachable and block saves while retaining the previous deck. Rendering may
+  show only seven slots; read-only guards and the store prevent an over-limit/unprojectable deck
+  from being overwritten by that display subset. `layout()` and existing controls are unchanged.
+  An already-loaded pre-M2.5 page omits `expected` and cannot save to the new server; reload before
+  the first post-cutover edit. This compatibility refusal does not authorize production cutover.
 - **Networking:** bare `XMLHttpRequest` wrapper (no `fetch`), form-encoded bodies, token
   in the query string. Polling: `/stats` every 2 s while the Deck view is visible; progress
   is extrapolated client-side every 1 s between polls.
@@ -431,10 +528,12 @@ These are structural, not bugs to fix in passing:
 1. One migrated action. `ActionRegistry` exists, but `app.launch` is its only registered
    action; every other verb is still a `case` in one `switch`, so a new capability costs a
    new endpoint, a new client call and a new key type until it is migrated onto the boundary.
-2. Configuration **in use** cannot express anything except "an ordered list of app paths". A V1
-   document model that can express ordered controls, stable ids, action identifiers, typed
-   parameters and presentation metadata now exists in `Configuration.swift` (M2.4, ADR-015), but
-   it is unwired: nothing reads or writes it, so the runtime format is unchanged.
+2. V1 configuration and its store are active, but the ES5 editor still edits an ordered path list,
+   not arbitrary controls, titles or custom ids. Unprojectable documents and selections above
+   seven controls are read-only. Unknown actions remain inert; no new action capability is added.
+   Frozen `launcher.json` is a compatibility/recovery artifact, not a second writable source.
+   S7 production cutover is complete and accepted; migration-on-GET remains part of the store
+   behavior. No further production operation is authorized by this documentation.
 3. No collector abstraction — `Stats` and `Music` happen to follow the same pattern, but
    `/stats` composes them by hand.
 4. M2.1 bounds HTTP parsing and moves auth before bodies; M2.2 bounds connection/media
@@ -442,19 +541,20 @@ These are structural, not bugs to fix in passing:
    One token still has one scope, and the legacy action-shaped routes are not migrated.
 5. The frontend has no data model for controls; the layout is arithmetic.
 6. Parser/admission, HTTP/media lifecycle, resource accounting, media bounds, the action
-   boundary and the configuration codec have Swift Testing coverage. Hardware playback and other
+   boundary, codec/store, launcher route and shipped client logic have Swift Testing coverage. Hardware playback and other
    modules lack isolated tests; there is no CI.
 
 ## 13. PLANNED extension seams
 
 Approved direction (see `docs/DECISIONS.md` ADR-005 to ADR-010, and ADR-015 for the
-configuration document shape). Except for the explicitly marked M2.1 admission, M2.2 resource,
-M2.3 action-boundary and M2.4 codec portions, these seams are **not implemented**.
+configuration document shape and ADR-016 for storage). The M2.1 admission, M2.2 resource,
+M2.3 app-action boundary, M2.4 codec and M2.5 S1–S4 storage/route/client portions are implemented.
+Production cutover is complete; the remaining capabilities below are planned.
 
 | Seam | Milestone | Shape |
 |---|---|---|
 | **Action boundary** | M2 (foundational) — `app.launch` implemented and accepted in M2.3 | An internal representation of an approved action — identifier, display metadata, validated parameters, server-side execution allowlist. `ActionRegistry` now carries this for app launch only; Shortcuts, developer and Git actions become implementations of it in later slices. No arbitrary shell execution. |
-| **Versioned configuration** | M2 (foundational) — V1 codec implemented in M2.4 (**unwired**, ADR-015); storage integration and cutover are M2.5 | A versioned document under `~/.oldphonedeck` that can express controls, action types and metadata, with explicit migration that preserves the existing `launcher.json` selection. `Configuration.swift` now carries the V1 document model (`DeckConfigurationV1`, `DeckControl`, `ControlID`, `ControlParameters`, `ControlPresentation`), a pure decoder over `ConfigurationInput` that separates absent / unreadable / legacy / V1 / malformed / unsupported-version, a self-verifying encoder, and an in-memory `migrateToV1` / `legacySelection` pair. It opens no file, consults no `Apps` and reaches no executor, so decoding confers no authority. Nothing calls it yet: `Launcher`, `/launcher` and the client are unchanged and `launcher.json` is untouched. |
+| **Versioned configuration** | M2.4 codec and M2.5 S1–S7 complete and accepted | V1 is active through `ConfigurationStore` and the shared launcher handler. Source-aware migration preserves frozen legacy bytes; canonical revisions, locking, atomic replacement, backup and verified recovery protect edits. The ES5 client consumes state and refreshed revisions but remains a seven-slot path-list editor. Decoding or storing a path confers no execution authority. See §7 and §10; S7 production cutover is accepted. |
 | **Ingress / auth hardening** | M2.1 admission and M2.2 resource bounds implemented; remaining M2 → M5 | Bounded headers/body, early query-token auth, receive/auth deadlines, connection/media caps and bounded frame/audio buffering. M2.2 passed independent review and Steering acceptance. Action authorization exists for app launch (M2.3, accepted); the remaining routes and the unscoped token belong to M5's independent T3 assessment and hardening. |
 | **Collector boundary** | Just-in-time with M4 telemetry | Registry of collectors (each with its own queue) composed into one snapshot, so Git/agent status does not edit the route table. |
 | **Frontend data model** | M3 | Data-driven controls and widgets, layout described rather than hand-computed — while staying one ES5 file with no framework. |

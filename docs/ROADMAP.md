@@ -113,8 +113,8 @@ M2.4 — Configuration V1 codec: **COMPLETE**. Accepted by Steering on 2026-11-0
 independent Codex review returned **PASS** with no unresolved major or minor findings. Implemented
 on `m2.4/configuration-v1-codec` from Steering's approved design, recorded as **ADR-015**
 (accepted), which elaborates ADR-007 without superseding it. Adds
-`Sources/oldphonedeck/Configuration.swift`: a pure, **unwired** codec for a versioned
-configuration document, plus in-memory legacy migration. Acceptance covers the codec, its tests
+`Sources/oldphonedeck/Configuration.swift`: a pure codec delivered **unwired at M2.4**, plus
+in-memory legacy migration (subsequently wired by M2.5 S3). M2.4 acceptance covers the codec, its tests
 and its documentation only; **no physical-device acceptance is claimed**, because no endpoint,
 route or client behaviour changed and there was nothing on a device to exercise.
 
@@ -154,16 +154,10 @@ never make an action executable and authorization stays in `ActionRegistry.dispa
 `ConfigurationError` cases carry no payload from the document. Caps are 1 MiB and 4096
 controls, and the byte cap bounds what can be stored rather than only what can be read.
 
-**Not wired — and accepted as not wired.** Nothing calls the codec: `Control.swift`,
-`ActionRegistry.swift`, `main.swift`, HTTP routing, `web/index.html` and the real
-`~/.oldphonedeck/launcher.json` are untouched, no endpoint changed, and runtime configuration
-behaviour is identical to M2.3. Steering accepted M2.4 on exactly that basis: this milestone
-delivers the boundary one milestone ahead of the feature that uses it, not the feature. The
-`ARCHITECTURE.md` §9 finding that absent and unparseable are indistinguishable therefore remains
-**open** and closes only when M2.5 wires the codec into the read path. **No runtime migration
-occurred** — `migrateToV1` and `legacySelection` are in-memory and unreferenced, and the legacy
-`launcher.json` stays the runtime format under ADR-007. M2.5 (storage integration, read-path
-migration and any cutover) has **not been started** and has not been briefed.
+**M2.4 delivery history.** Steering accepted the codec without route/client wiring or runtime
+migration; the legacy `Launcher` was still active then. M2.5 S3 later wired the read path, closing
+the absent/unparseable finding in the implemented branch, and S4 added the revised client. That
+later implementation and the accepted production migration/cutover are recorded below.
 
 Validation at acceptance: all **248 Swift Testing tests** pass (the 90 retained M2.1–M2.3 tests plus
 158 new ones across 17 new suites, many parameterized), covering input states, legacy decode,
@@ -275,11 +269,115 @@ across any of the four M2.4 commits; it is recorded here for a human edit. It do
 acceptance, because `docs/ARCHITECTURE.md` §3 (File and module map) carries the equivalent row and
 lists the codec's exported types.
 
-M2.5 remains **NOT STARTED** and unbriefed. M2 overall remains **IN PROGRESS**.
+M2.5 — Storage Integration & Migration Cutover: **COMPLETE** (2026-11-08). Design approved by Steering and
+recorded as **ADR-016** (accepted 2026-11-07), which elaborates ADR-007 and ADR-015 without
+superseding either. The consolidated design is `docs/M2.5-DESIGN.md`; the drafting record is
+`docs/M2.5-ADR-016-DRAFT.md`. The milestone is split into slices S1, S1b, S2–S7 (§13 of the design);
+**S1, S1b and S2–S4 are implemented and ACCEPTED by Steering** on
+`m2.5/s1-configuration-store`, S2 including its security correction (0700 for newly created
+configuration directories, flag-like `--config-dir` values rejected). **S3 — the runtime wiring of
+`GET`/`POST /launcher` to `ConfigurationStore`, retiring `Launcher.selected()`/`Launcher.save()`
+and the `Apps.isKnown` save filter, and adding `409` to the reason map — is accepted** after the
+independent review (373/373 tests, no blockers). **S4 is implemented by Codex**, reassigned as
+the sole WRITE_OWNER by Steering: the ES5 page consumes the full GET/POST shape, sends
+`n`/`paths`/`expected`, refreshes its revision after a save, and blocks saves in read-only states
+with a visible warning. Stale, busy, unreachable and failed-write responses retain the edit and
+show an explanation. The accepted S3 minor is also closed: `DeckRoute.validateParameters` reuses
+the pure selection parser; missing-revision and state refusals stay in the store in their existing
+order. **S4 physical iPhone 11 acceptance PASS**, confirmed by the user: keys and icons, changing
+and saving a key, a second save without reload, persistence after reload, portrait/landscape and
+Home Screen behavior. **S1–S7 are ACCEPTED by Steering**, including S5 documentation,
+S6 isolated acceptance and S7 production cutover. Phase A is complete.
 
-M2 is **not complete**. M2.1, M2.2, M2.3 and M2.4 are accepted; the Action Registry currently
-supports only app launch, and versioned configuration exists only as an unwired, accepted codec —
-storage integration and the read-path cutover are M2.5.
+S4 automated evidence: **52/52 focused tests** in four suites and **388/388 full-suite tests** in
+41 suites pass with the documented CLT Testing framework. JavaScriptCore executes the shipped
+keys/editor code, including a real loopback GET → edit → POST → edit → POST against a temporary
+store, stale-write feedback and an over-limit save guard. The entire inline script parses as
+ECMAScript 5; the layout, tap, key-rendering and editor-interaction functions match S3. A clean
+release build passes with zero warnings. Tests deny access to the real configuration directory;
+no production server was started or stopped. These checks do not replace physical iPhone evidence.
+
+S4 isolated device staging (historical, before S7) verified migration-on-GET, HTTPS using a
+mode-preserving copy of the existing TLS material, matching LAN-IP certificate coverage, and three
+fixture-app PNG icons on 8055/8057/8058. The isolated process used a temporary configuration directory and fresh token;
+access to production configuration was denied for that process. **Teardown PASS**: only the owned
+isolated instance was stopped, the verified fixture directory and logs were removed, and all 16
+production entries matched baseline SHA-256, permissions and modification/change timestamps.
+Production listener inventory was unchanged and Git remained clean at `d0d8747`. No production
+files were migrated, no production process was stopped/restarted, and no cutover occurred.
+
+**Closure evidence — Steering confirmation (2026-11-08).** The following production and device
+results are recorded from Steering's confirmation; Phase B does not rerun these operations.
+
+- **S7 production cutover / migration: PASS.**
+- **Rollback rehearsal: PASS.**
+- **Production authentication rotation: PASS.** New authenticated access works on the physical
+  iPhone 11; the previous token is rejected. No credential values or authenticated URLs are recorded.
+- **Physical iPhone 11 acceptance: PASS.**
+
+M2.5 is complete. This documentation consolidation is submitted for Steering acceptance through
+one PR targeting `main`; merge and branch deletion are not authorized. The parent M2 status is
+unchanged, and no new milestone work is authorized.
+
+**S1 delivery record (historical).** S1 added `Sources/oldphonedeck/ConfigurationStore.swift`
+without wiring it into the application. At that slice the legacy `Launcher` remained active,
+`Configuration.swift` was unchanged and no endpoint/client behavior or real configuration was
+modified. S3 subsequently activated the store and S4 activated the revised client on the feature
+branch. The store accepts an injected directory because `NSHomeDirectory()` ignores `$HOME` on
+this macOS build; automated store tests use temporary directories.
+
+What S1 implements: source-aware classification into ten distinguishable states, replacing the
+single `nil` the former `Launcher.selected()` returned for three different situations; bounded reads with
+`O_NOFOLLOW | O_NONBLOCK`, an `fstat` regular-file check and a cap-plus-one byte limit, so a symlink
+fails closed, a FIFO cannot block the shared HTTP queue and an oversized file is never fully
+allocated; an opaque revision token fingerprinting the canonical V1 *content*, so neither a
+whitespace-only hand edit nor a lossless migration invalidates a client; non-blocking `flock` on a
+separate `config.lock` held across the whole read-modify-write including a migration-on-read that is
+double-checked under the lock; the three-phase commit with the backup prepared under a temporary name
+and swapped in **before** the commit; recovery from the base bytes captured under the lock rather
+than from the backup; and a per-step filesystem seam that makes every failure point injectable.
+
+Validation at S1: all **319 Swift Testing tests pass in 36 suites** (the 248 retained M2.1–M2.4
+tests plus 71 new ones in 7 new suites), covering classification and source-awareness, symlinks,
+FIFOs, directories and unreadable files, the revision lifecycle including migration transparency,
+over-limit read-only behaviour, selection preservation for empty, leading, trailing and duplicate
+paths, ten failure injections with byte-level assertions on both generations, a two-queue
+concurrency storm, and the platform measurements ADR-016 rule 8 requires. `swift build -c release`
+passes with **zero warnings**. **Eight gate mutations** — removing the seven-control writable gate,
+moving the backup swap after the commit, dropping the in-lock migration re-check, skipping
+post-commit verification, dropping `O_NOFOLLOW`, fingerprinting raw bytes instead of canonical
+content, accepting a missing revision, and accepting a stale revision — were each observed to turn
+the relevant tests red and were reverted from a backup verified byte-identical by SHA-256. One
+mutation in the first round was ineffective rather than caught: it removed a comparison that an
+earlier `guard let` already made unreachable, and was replaced by one that removes the gate where it
+actually is. **No physical iPhone 11 acceptance is claimed or possible for S1**, because no endpoint
+or client behaviour changed.
+
+Two findings surfaced while implementing S1, recorded rather than worked around, because working
+around either would mean changing `Configuration.swift` or adding a second parser:
+
+- A legacy array with more entries than `ConfigurationDecoder.maximumControlCount` (4096) is
+  rejected by the codec's corruption guard **before** migration can run, so it reports `malformed`
+  with `selected: null` rather than `legacy-readonly` with its selection served. ADR-016 rule 3's
+  promise therefore holds only for legacy files the decoder accepts. The reachable shapes of
+  `legacyUnrepresentable` are an entry longer than 4096 bytes and a canonical form over 1 MiB.
+- A legacy file with more than seven entries migrates faithfully and lands in the over-limit state,
+  so it becomes read-only immediately after migration. That is rule 11 working as intended, but it
+  means a hand-edited legacy selection above seven keys can be seen and used, and not edited, until
+  it is reduced by hand.
+
+The shared `LauncherRoute.handle` and `DeckRoute.validateParameters` selection checks now resolve
+the former S1b/S3 structural blockers recorded in `docs/M2.5-DESIGN.md` §17. State and revision
+refusals remain in the store in the approved order. The accepted compatibility limitation remains:
+an already-loaded pre-M2.5 page can read but cannot save to the new server without `expected`;
+reload the revised page before the first post-cutover save.
+
+M2 overall remains **IN PROGRESS**.
+
+M2 is **not complete**. M2.1–M2.4 and M2.5 S1–S7 are accepted; the Action Registry currently
+supports only app launch, and versioned configuration is wired end to end with accepted production
+cutover (store, route, wire contract and client). M2.5 closure does not extend M2's scope or begin
+another milestone.
 M5 remains the independent security/reliability review. Physical iPhone 11 checks passed
 for WSS streaming, camera frames reaching the Mac, fresh-frame delivery, front/back
 switching, reconnection and deck polling. Continuous live MJPEG was not confirmed on

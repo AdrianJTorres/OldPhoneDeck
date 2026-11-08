@@ -60,27 +60,9 @@ enum Apps {
     }
 }
 
-/// Which apps the phone launcher shows, in order. Stored on the Mac so Safari and the
-/// home-screen app (which have separate storage on iOS) see the same list.
-enum Launcher {
-    static let file = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".oldphonedeck/launcher.json")
-
-    /// nil = never configured (phone shows everything and suggests editing).
-    static func selected() -> [String]? {
-        guard let data = try? Data(contentsOf: file),
-              let paths = try? JSONSerialization.jsonObject(with: data) as? [String] else { return nil }
-        return paths
-    }
-
-    @discardableResult
-    static func save(_ paths: [String]) throws -> Int {
-        let known = Set(Apps.list().compactMap { $0["path"] })
-        let clean = paths.filter { known.contains($0) }
-        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try JSONSerialization.data(withJSONObject: clean, options: .prettyPrinted).write(to: file)
-        return clean.count
-    }
-}
+// `Launcher` (selected()/save() over `~/.oldphonedeck/launcher.json`, with an `Apps.isKnown`
+// save filter) was retired by M2.5 S3: the deck selection is read and written exclusively
+// through `ConfigurationStore`, which owns `launcher.json` migration and `config.json`.
 
 /// Sends text to the Claude desktop app using the same deep link its own macOS
 /// Service uses: claude://claude.ai/new?q=<text>&surface=chat (found in app.asar).

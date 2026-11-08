@@ -6,6 +6,39 @@ import ApplicationServices
 struct Options {
     var port: UInt16 = 8045                // http = port, https = port+2, secure WebSocket = port+3
     var micDevice = "BlackHole"            // output device that receives a modern iPhone's mic
+    var configDir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".oldphonedeck")
+
+    enum ConfigDirError: Error, Equatable, CustomStringConvertible {
+        case missingValue, empty, flagLike(String)
+        var description: String {
+            switch self {
+            case .missingValue: return "--config-dir requires PATH (try --help)"
+            case .empty: return "--config-dir requires a non-empty PATH (try --help)"
+            case .flagLike(let value): return "--config-dir requires PATH, got option \(value) (try --help)"
+            }
+        }
+    }
+
+    /// Expands `~`, resolves a relative path against the current directory and standardizes the
+    /// result. Separate from `init` so tests can prove resolution without exiting the process.
+    static func resolveConfigDir(_ raw: String?) throws -> URL {
+        guard let raw else { throw ConfigDirError.missingValue }
+        guard !raw.isEmpty else { throw ConfigDirError.empty }
+        guard !raw.hasPrefix("-") else { throw ConfigDirError.flagLike(raw) }
+        return URL(fileURLWithPath: (raw as NSString).expandingTildeInPath).standardizedFileURL
+    }
+
+    /// Creates the configuration directory with `0700` when it does not exist, mirroring
+    /// `POSIXConfigurationFile.createDirectory` (ADR-016): an existing directory keeps its current
+    /// mode — the production `~/.oldphonedeck` is `0755` today and this has no business changing
+    /// it. The mode is applied explicitly to the leaf, which will hold the token and the TLS
+    /// identity; intermediates keep the process default.
+    static func createConfigDir(_ url: URL) throws {
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory), isDirectory.boolValue { return }
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
+    }
 
     init(_ args: [String]) {
         var it = args.dropFirst().makeIterator()
@@ -13,11 +46,21 @@ struct Options {
             switch a {
             case "--port": port = UInt16(it.next() ?? "") ?? port
             case "--mic-device": micDevice = it.next() ?? micDevice
+            case "--config-dir":
+                do {
+                    configDir = try Options.resolveConfigDir(it.next())
+                    // Created up front so an isolated instance fails here rather than falling
+                    // back to the production directory silently at first use.
+                    try Options.createConfigDir(configDir)
+                } catch let e as ConfigDirError { print(e.description); exit(2) }
+                catch { print("--config-dir is unusable: \(error.localizedDescription)"); exit(2) }
             case "-h", "--help":
                 print("""
                 oldphonedeck: turn an old iPhone into a Stream Deck-style control panel for your Mac
                   --port N          HTTP port (default 8045; HTTPS uses N+2, WebSocket N+3)
                   --mic-device NAME audio device that receives the phone's mic (default BlackHole)
+                  --config-dir PATH configuration directory for the token, launcher config and TLS
+                                    (default ~/.oldphonedeck; the app catalog is never redirected)
                 """)
                 exit(0)
             default: print("Unknown option \(a) (try --help)"); exit(2)
@@ -28,7 +71,11 @@ struct Options {
 
 setvbuf(stdout, nil, _IOLBF, 0)
 let opts = Options(CommandLine.arguments)
-let configDir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".oldphonedeck")
+let configDir = opts.configDir
+// --config-dir redirects the token, the configuration store and the TLS material; the application
+// catalog (Apps.list) keeps scanning the real application directories.
+LocalTLS.use(configDir: configDir)
+let configStore = ConfigurationStore(directory: configDir)
 
 // MARK: Access token (anyone on the Wi-Fi could otherwise open apps on your Mac)
 
@@ -139,14 +186,10 @@ let routes: (HTTPRequest, HTTPConnection) -> Void = { req, conn in
     case .artwork:
         guard let art = music.artwork() else { return conn.respond(404, text: "no artwork") }
         conn.respond(200, "image/jpeg", art)
-    case .launcherRead:
-        let selected: Any = Launcher.selected() ?? NSNull()
-        conn.respondJSON(["selected": selected, "all": Apps.list()])
-    case .launcherSave:
-        // Body: paths=<path>\n<path>\n… in display order.
-        let paths = (p["paths"] ?? "").split(separator: "\n").map(String.init)
-        do { conn.respondJSON(["saved": try Launcher.save(paths)]) }
-        catch { conn.respond(500, text: error.localizedDescription) }
+    case .launcherRead, .launcherSave:
+        // The same shared handler pattern as AppLaunchRoute: one entry point for GET and POST,
+        // validation re-run inside, and no caller can reach the store without the check.
+        LauncherRoute.handle(req, store: configStore, on: conn)
     case .icon:
         let path = p["path"] ?? ""
         guard Apps.isKnown(path) else { return conn.respond(404, text: "unknown app") }
@@ -203,6 +246,7 @@ Modern iPhone (voice, camera, mic): once, open http://\(lanIP):\(opts.port)/oldp
 install it, enable it in Settings → General → About → Certificate Trust Settings,
 then use https://\(lanIP):\(opts.port + 2)/#k=\(token)
 Camera for OBS (Media Source): http://localhost:\(opts.port)/camera.mjpg?k=\(token)
+Configuration directory: \(configDir.path)
 Ctrl-C to quit.
 
 """)

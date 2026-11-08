@@ -7,9 +7,14 @@ import Security
 /// The CA is created once; trust it on the iPhone and every later server cert is accepted.
 /// The server cert is re-issued automatically when the Mac's LAN address changes.
 enum LocalTLS {
-    static let dir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".oldphonedeck/tls")
+    /// `tls/` inside the configuration directory. `use(configDir:)` redirects it for `--config-dir`;
+    /// the default is the production `~/.oldphonedeck/tls`, unchanged.
+    private(set) static var dir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".oldphonedeck/tls")
     static var caDER: URL { dir.appendingPathComponent("oldphonedeck-ca.cer") }
     private static let p12Password = "oldphonedeck"
+
+    /// Points the certificate directory at `tls/` inside the given configuration directory.
+    static func use(configDir: URL) { dir = configDir.appendingPathComponent("tls") }
 
     /// Returns a TLS identity for `ip`, creating the CA and/or server cert as needed.
     static func identity(for ip: String) -> sec_identity_t? {
