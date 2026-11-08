@@ -488,8 +488,14 @@ One file: inline CSS, markup and one ES5 IIFE. No framework or build step.
   scaled by a single CSS `transform: scale()` with origin `0 0`. `fit()` computes the
   scale from the viewport minus safe-area insets (measured via a hidden `env()` probe, so
   old iOS yields zero). Landscape `H = 320`, `W = clamp(480…760)`; portrait (modern only)
-  `W = 360`, `H = max(520, …)`. `layout()` then places keys, music card and widgets with
-  hardcoded pixel arithmetic per orientation.
+  `W = 360`, `H = max(620, …)`. `layout()` then places keys, music card and widgets with
+  hardcoded pixel arithmetic per orientation. M3.1 puts music above keys in portrait and beside
+  them when landscape `W >= 640`; compact legacy landscape retains a single-row player.
+  Transport targets are sized with the inverse stage scale to stay at least 44 CSS px effective.
+  Featured metadata uses larger type and 52px artwork; titles/artists truncate within the card.
+  Network/battery cards remain visible, with compact network styling and fewer battery rows when
+  vertical space is limited. Media buttons expose labels, focus and Enter/Space activation.
+  These changes are implemented on `m3.1/media-ui`, pending physical iPhone 11 acceptance.
 - **State:** module-scope variables only, plus `localStorage` for `token` and `view`
   (wrapped in try/catch for private mode). App selection lives on the Mac, because
   Safari and the Home Screen app have separate storage.
@@ -502,7 +508,8 @@ One file: inline CSS, markup and one ES5 IIFE. No framework or build step.
   unreachable and failed-write states. Failed/malformed GET or malformed successful POST responses
   mark configuration unreachable and block saves while retaining the previous deck. Rendering may
   show only seven slots; read-only guards and the store prevent an over-limit/unprojectable deck
-  from being overwritten by that display subset. `layout()` and existing controls are unchanged.
+  from being overwritten by that display subset. M3.1 changes media geometry only; the configuration
+  protocol and editor remain unchanged.
   An already-loaded pre-M2.5 page omits `expected` and cannot save to the new server; reload before
   the first post-cutover edit. This compatibility refusal does not authorize production cutover.
 - **Networking:** bare `XMLHttpRequest` wrapper (no `fetch`), form-encoded bodies, token
@@ -519,7 +526,8 @@ One file: inline CSS, markup and one ES5 IIFE. No framework or build step.
   streaming), plus three sheets: Take note, app editor, token login.
 - **Extension reality (today):** keys are 7 app slots plus one hardcoded "Take note" key;
   widgets are hardcoded cards whose geometry lives in `layout()`. Adding either means
-  editing the layout arithmetic. This is what M3 changes.
+  editing the layout arithmetic. M3.1 is a bounded media-layout slice; the broader ADR-010
+  data-driven work remains planned within M3.
 
 ## 12. Known architectural limitations
 

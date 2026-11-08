@@ -84,6 +84,11 @@
   .arrow.up { color: #30d158; }
   #spark { display: block; margin-top: 6px; }
   .foot { position: absolute; left: 12px; right: 12px; bottom: 9px; font-size: 9px; color: #636366; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .card.compact { padding: 8px 10px; }
+  .card.compact h3 { margin-bottom: 4px; }
+  .card.compact .big { font-size: 20px; line-height: 22px; }
+  .card.compact .sub { font-size: 9px; }
+  .card.compact #spark { margin-top: 4px; }
   /* Batteries: compact chips, icon + percentage */
   .chip { float: left; width: 50%; height: 30px; position: relative; box-sizing: border-box; padding-right: 6px; }
   .chip svg { position: absolute; left: 0; top: 8px; width: 13px; height: 13px; }
@@ -109,10 +114,19 @@
   #mProg { position: absolute; left: 54px; right: 116px; bottom: 8px; height: 3px; border-radius: 2px; background: rgba(255,255,255,.12); overflow: hidden; }
   #mProg i { display: block; height: 100%; width: 0; background: rgba(255,255,255,.75); border-radius: 2px; }
   #mBtns { position: absolute; right: 8px; top: 9px; width: 104px; height: 34px; }
-  .mb { float: left; width: 34px; height: 34px; border-radius: 17px; position: relative; }
-  .mb svg { position: absolute; left: 9px; top: 9px; }
-  .mb.play { background: #f5f5f7; margin: 0 1px; }
+  .mb { float: left; width: 44px; height: 44px; border-radius: 22px; position: relative; cursor: pointer; }
+  .mb svg { position: absolute; left: 50%; top: 50%; margin-left: -8px; margin-top: -8px; }
+  .mb.play { background: #f5f5f7; margin: 0 8px; }
   .mb.down { -webkit-transform: scale(.9); transform: scale(.9); opacity: .7; }
+
+  /* Media-first card; compact legacy landscape keeps the original single-row arrangement. */
+  #music.featured #mArt, #music.featured #mNote { left: 14px; top: 14px; width: 52px; height: 52px; border-radius: 12px; }
+  #music.featured #mNote { line-height: 52px; font-size: 26px; }
+  #music.featured #mInfo { left: 78px; right: 14px; top: 16px; }
+  #music.featured #mTitle { font-size: 18px; line-height: 23px; }
+  #music.featured #mArtist { font-size: 12px; line-height: 17px; margin-top: 4px; }
+  #music.featured #mProg { left: 14px; right: 14px; top: 78px; bottom: auto; height: 4px; }
+  #music.featured #mBtns { right: 50%; top: auto; bottom: 10px; }
 
   /* ---- Phone tab (modern iPhones) ---- */
   #pvBox { position: absolute; left: 16px; top: 42px; height: 264px; border-radius: 18px; overflow: hidden;
@@ -191,9 +205,9 @@
       <div id="mInfo"><div id="mTitle">Nothing playing</div><div id="mArtist">Spotify or Apple Music</div></div>
       <div id="mProg"><i id="mProgFill"></i></div>
       <div id="mBtns">
-        <div class="mb" id="mPrev"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M3.5 3v10M12.5 3.6v8.8L5.8 8z" fill="#f5f5f7" stroke="#f5f5f7" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg></div>
-        <div class="mb play" id="mPlay"></div>
-        <div class="mb" id="mNext"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M12.5 3v10M3.5 3.6v8.8L10.2 8z" fill="#f5f5f7" stroke="#f5f5f7" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg></div>
+        <div class="mb" id="mPrev" role="button" tabindex="0" aria-label="Previous track"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M3.5 3v10M12.5 3.6v8.8L5.8 8z" fill="#f5f5f7" stroke="#f5f5f7" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg></div>
+        <div class="mb play" id="mPlay" role="button" tabindex="0" aria-label="Play"></div>
+        <div class="mb" id="mNext" role="button" tabindex="0" aria-label="Next track"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M12.5 3v10M3.5 3.6v8.8L10.2 8z" fill="#f5f5f7" stroke="#f5f5f7" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/></svg></div>
       </div>
     </div>
     <div id="net" class="card">
@@ -304,7 +318,7 @@
 
   // ---------- layout ----------
   // Landscape: the stage is 320pt tall and as wide as the screen's shape (480 on a 4S, ~700 on an iPhone 17).
-  // Portrait (modern phones held upright): 360pt wide, keys on top, widgets below.
+  // Portrait (modern phones held upright): 360pt wide, media first, keys and status below.
   // The stage sits inside the safe area; the page background fills the rest of the screen.
   var W = 480, H = 320, portrait = false;
   function insets() {
@@ -316,28 +330,41 @@
     var iw = window.innerWidth, ih = window.innerHeight, ins = insets();
     var aw = iw - ins.l - ins.r, ah = ih - ins.t - ins.b;
     portrait = modern && ah > aw * 1.2;
-    if (portrait) { W = 360; H = Math.max(520, Math.round(360 * ah / aw)); }
+    if (portrait) { W = 360; H = Math.max(620, Math.round(360 * ah / aw)); }
     else { H = 320; W = Math.max(480, Math.min(760, Math.round(320 * aw / ah))); }
     var s = Math.min(aw / W, ah / H), st = $('stage');
     st.style.width = W + 'px'; st.style.height = H + 'px';
     st.style.webkitTransform = st.style.transform = 'scale(' + s + ')';
     st.style.left = ins.l + (aw - W * s) / 2 + 'px';
     st.style.top = ins.t + (ah - H * s) / 2 + 'px';
-    layout();
+    layout(s);
   }
-  function layout() {
-    // Compact widgets: Internet (number + small graph) and Batteries (icon + %), stacked in one narrow column.
+  function layout(scale) {
+    // Keep Internet and Batteries visible beside or below the media and keys.
     var net = $('net'), bat = $('bat'), cardW, netH = 104, batH;
     net.className = bat.className = 'card';
     $('hint').style.display = 'none';
+    var featured = portrait || W >= 640;
+    $('music').className = 'card' + (featured ? ' featured' : '');
+    // Stage transforms must not shrink the effective transport targets below 44 CSS px.
+    var target = Math.max(44, Math.ceil(44 / scale)), buttons = target * 3 + 16;
+    ['mPrev', 'mPlay', 'mNext'].forEach(function (id) {
+      px($(id), { width: target, height: target, borderRadius: target / 2 });
+    });
+    px($('mBtns'), { width: buttons, height: target });
+    $('mBtns').style.marginRight = featured ? -buttons / 2 + 'px' : '0';
+    $('mBtns').style.top = featured ? 'auto' : '4px';
+    $('mInfo').style.right = featured ? '14px' : buttons + 20 + 'px';
+    $('mProg').style.right = featured ? '14px' : buttons + 20 + 'px';
+    px($('music'), { height: featured ? 100 + target : target + 8 });
     if (portrait) {
-      // Everything in one centered stack: keys, now playing, then the two widgets side by side.
-      var stackH = 208 + 8 + 58 + 12 + netH, top = Math.max(90, Math.round((H - stackH) / 2) + 10);
+      // Keep media within immediate reach, with the existing keys and status below it.
+      var top = 88, musicH = 100 + target, keysTop = top + musicH + 16;
       $('seg').style.top = '50px';
-      px($('keys'), { left: (W - 316) / 2, top: top });
-      px($('music'), { left: 16, top: top + 208 + 4, width: W - 32 });
+      px($('music'), { left: 16, top: top, width: W - 32 });
+      px($('keys'), { left: (W - 316) / 2, top: keysTop });
       cardW = (W - 42) / 2; batH = netH;
-      var cardTop = top + 208 + 4 + 58 + 12;
+      var cardTop = keysTop + 208 + 12;
       px(net, { left: 16, top: cardTop, width: cardW, height: netH });
       px(bat, { left: 16 + cardW + 10, top: cardTop, width: cardW });
       var pvH = Math.round((W - 32) * 3 / 4);
@@ -345,21 +372,33 @@
       px($('pCtl'), { left: 16, top: 72 + pvH + 14, width: W - 32 });
     } else {
       $('seg').style.top = '11px';
-      cardW = W >= 640 ? 150 : 128;
-      var right = W - 16, colLeft = right - cardW;
-      var keysArea = colLeft - 16 - 16;                       // left column: keys on top, now playing below
-      var keysLeft = 16 + Math.max(0, (keysArea - 316) / 2);
-      px($('keys'), { left: keysLeft, top: 52 });
-      px($('music'), { left: 16, top: 252, width: Math.max(316, keysArea) });
-      batH = 304 - (52 + netH + 10);
-      px(net, { left: colLeft, top: 52, width: cardW, height: netH });
-      px(bat, { left: colLeft, top: 52 + netH + 10, width: cardW });
+      if (featured) {
+        // Keys retain their familiar grid; media owns the larger right-hand card.
+        var mediaLeft = 16 + 316 + 20, mediaW = W - mediaLeft - 16;
+        px($('keys'), { left: 16, top: 76 });
+        px($('music'), { left: mediaLeft, top: 52, width: mediaW });
+        cardW = (mediaW - 10) / 2;
+        var statusTop = 52 + 100 + target + 12;
+        netH = batH = H - statusTop - 16;
+        px(net, { left: mediaLeft, top: statusTop, width: cardW, height: netH });
+        px(bat, { left: mediaLeft + cardW + 10, top: statusTop, width: cardW });
+      } else {
+        // iOS 8/9 landscape fallback, without modern layout features.
+        cardW = 128;
+        var colLeft = W - 16 - cardW, keysArea = colLeft - 32;
+        px($('keys'), { left: 16 + Math.max(0, (keysArea - 316) / 2), top: 46 });
+        px($('music'), { left: 16, top: H - target - 24, width: Math.max(316, keysArea) });
+        batH = 304 - (52 + netH + 10);
+        px(net, { left: colLeft, top: 52, width: cardW, height: netH });
+        px(bat, { left: colLeft, top: 52 + netH + 10, width: cardW });
+      }
       var ctlW = W >= 640 ? 180 : 150;
       px($('pvBox'), { left: 16, top: 42, width: W - 32 - ctlW - 12, height: 264 });
       px($('pCtl'), { left: W - 16 - ctlW, top: 42, width: ctlW });
     }
-    batteryRows = Math.max(2, Math.floor((batH - 40) / 30)) * 2;   // max chips that fit, two per row
-    var spark = $('spark'), sw = cardW - 24, sh = 18;
+    if (netH < 104) net.className = 'card compact';
+    batteryRows = Math.max(1, Math.floor((batH - 40) / 30)) * 2;   // max chips that fit, two per row
+    var spark = $('spark'), sw = cardW - 24, sh = netH < 104 ? 10 : 18;
     spark.width = sw * 2; spark.height = sh * 2;
     px(spark, { width: sw, height: sh });
     drawSpark(lastHistory); renderBatteries(lastBatteries);
@@ -690,7 +729,10 @@
   var PLAY = '<svg width="16" height="16" viewBox="0 0 16 16"><path d="M5 3v10l8-5z" fill="#111"/></svg>';
   var PAUSE = '<svg width="16" height="16" viewBox="0 0 16 16"><path d="M4.5 3h2.6v10H4.5zM8.9 3h2.6v10H8.9z" fill="#111"/></svg>';
   var track = { playing: false, position: 0, duration: 0, at: 0 }, artKey = '';
-  function setPlayIcon(playing) { $('mPlay').innerHTML = playing ? PAUSE : PLAY; }
+  function setPlayIcon(playing) {
+    $('mPlay').innerHTML = playing ? PAUSE : PLAY;
+    $('mPlay').setAttribute('aria-label', playing ? 'Pause' : 'Play');
+  }
   function renderMusic(m) {
     m = m || {};
     $('mTitle').textContent = m.title || 'Nothing playing';
@@ -718,6 +760,11 @@
   tap($('mNext'), function () { media('next'); });
   tap($('mPrev'), function () { media('previous'); });
   tap($('mInfo'), function () { media('open'); toast('Opening the player on the Mac'); });
+  ['mPrev', 'mPlay', 'mNext'].forEach(function (id) {
+    $(id).addEventListener('keydown', function (e) {
+      if (e.keyCode === 13 || e.keyCode === 32) { e.preventDefault(); $(id).click(); }
+    });
+  });
   setPlayIcon(false);
 
   // ---------- Phone tab: camera + mic to the Mac over a secure WebSocket ----------

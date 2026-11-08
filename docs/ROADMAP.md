@@ -39,7 +39,7 @@ Exit criteria: met — documentation accepted by Steering; no `Sources/**` or
 
 ## M2 — Foundations
 
-**STATUS: IN PROGRESS**
+**STATUS: COMPLETE** — accepted by Steering (2026-11-08).
 
 M2.1 — Bounded HTTP Admission: **COMPLETE**, accepted by Steering. Implemented in
 `4dd7fae593934053b5595b01cb52735351d42e18` on `m2.1/bounded-http-admission`: bounded
@@ -315,9 +315,8 @@ results are recorded from Steering's confirmation; Phase B does not rerun these 
   iPhone 11; the previous token is rejected. No credential values or authenticated URLs are recorded.
 - **Physical iPhone 11 acceptance: PASS.**
 
-M2.5 is complete. This documentation consolidation is submitted for Steering acceptance through
-one PR targeting `main`; merge and branch deletion are not authorized. The parent M2 status is
-unchanged, and no new milestone work is authorized.
+M2.5 consolidation was merged through PR #6. M2 was subsequently accepted as complete by
+Steering before authorizing M3.1.
 
 **S1 delivery record (historical).** S1 added `Sources/oldphonedeck/ConfigurationStore.swift`
 without wiring it into the application. At that slice the legacy `Launcher` remained active,
@@ -372,12 +371,9 @@ refusals remain in the store in the approved order. The accepted compatibility l
 an already-loaded pre-M2.5 page can read but cannot save to the new server without `expected`;
 reload the revised page before the first post-cutover save.
 
-M2 overall remains **IN PROGRESS**.
-
-M2 is **not complete**. M2.1–M2.4 and M2.5 S1–S7 are accepted; the Action Registry currently
-supports only app launch, and versioned configuration is wired end to end with accepted production
-cutover (store, route, wire contract and client). M2.5 closure does not extend M2's scope or begin
-another milestone.
+M2 overall is **COMPLETE**, accepted by Steering on 2026-11-08. M2.1–M2.4 and M2.5 S1–S7
+are accepted; the Action Registry supports app launch, and versioned configuration is wired end
+to end with accepted production cutover (store, route, wire contract and client).
 M5 remains the independent security/reliability review. Physical iPhone 11 checks passed
 for WSS streaming, camera frames reaching the Mac, fresh-frame delivery, front/back
 switching, reconnection and deck polling. Continuous live MJPEG was not confirmed on
@@ -402,7 +398,31 @@ Exit criteria: existing behaviour preserved on the iPhone 11; build clean; ADRs 
 
 ## M3 — PhoneDeck UI
 
-**STATUS: NOT STARTED**
+**STATUS: IN PROGRESS**
+
+**M3.1 — Media-first iPhone UI:** implemented on `m3.1/media-ui`, pending physical iPhone 11
+acceptance and Steering acceptance. The existing music card leads the portrait deck and sits
+beside the keys in wide landscape. Larger metadata, artwork and transport controls reuse
+`/stats`, `/artwork` and `/media`; effective transport targets are at least 44 CSS px after stage
+scaling. App keys, Claude, connectivity, network and battery status remain available. Compact
+legacy landscape retains its single-row player. No backend, endpoints, configuration format,
+dependencies or action types change. ADR-010's broader data-driven frontend remains later M3 work.
+
+Automated verification: the full inline script parses as ES5; 25 focused client/launcher HTTP
+checks pass; a clean release build completes with zero warnings. Browser checks at five viewport
+sizes cover portrait/landscape with simulated safe areas and Safari chrome, plus 480×320 compact
+layout: transport targets measure at least 44 CSS px, cards do not overlap or leave the viewport,
+and eight keys remain. Mocked transport commands, empty player and disconnected status pass.
+Isolated HTTP/HTTPS preview serves the shipped resource and a copied V1 configuration, with
+production access denied by a process sandbox; production contents and metadata remain unchanged.
+Browser emulation and automated checks do not establish physical Safari acceptance.
+
+Physical acceptance pending: on the isolated preview, check Spotify and Apple Music track/artist,
+artwork, paused/playing state, previous/play-pause/next and progress in portrait and landscape;
+rotate with a long title and confirm controls remain visible and easy to tap. Check empty player,
+connectivity indication, app keys, Claude sheet and Home Screen standalone layout. Any app launch,
+media command or note submission during acceptance acts on the Mac; agent preview checks do not
+invoke those actions. No device PASS or production deployment is claimed.
 
 Turn the deck into the intended iPhone 11 control surface.
 
