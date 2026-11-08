@@ -157,7 +157,7 @@ controls, and the byte cap bounds what can be stored rather than only what can b
 **M2.4 delivery history.** Steering accepted the codec without route/client wiring or runtime
 migration; the legacy `Launcher` was still active then. M2.5 S3 later wired the read path, closing
 the absent/unparseable finding in the implemented branch, and S4 added the revised client. That
-later implementation is recorded below; production migration/cutover remains separately gated.
+later implementation and the accepted production migration/cutover are recorded below.
 
 Validation at acceptance: all **248 Swift Testing tests** pass (the 90 retained M2.1–M2.3 tests plus
 158 new ones across 17 new suites, many parameterized), covering input states, legacy decode,
@@ -269,7 +269,7 @@ across any of the four M2.4 commits; it is recorded here for a human edit. It do
 acceptance, because `docs/ARCHITECTURE.md` §3 (File and module map) carries the equivalent row and
 lists the codec's exported types.
 
-M2.5 — Storage Integration & Migration Cutover: **IN PROGRESS**. Design approved by Steering and
+M2.5 — Storage Integration & Migration Cutover: **COMPLETE** (2026-11-08). Design approved by Steering and
 recorded as **ADR-016** (accepted 2026-11-07), which elaborates ADR-007 and ADR-015 without
 superseding either. The consolidated design is `docs/M2.5-DESIGN.md`; the drafting record is
 `docs/M2.5-ADR-016-DRAFT.md`. The milestone is split into slices S1, S1b, S2–S7 (§13 of the design);
@@ -286,8 +286,8 @@ show an explanation. The accepted S3 minor is also closed: `DeckRoute.validatePa
 the pure selection parser; missing-revision and state refusals stay in the store in their existing
 order. **S4 physical iPhone 11 acceptance PASS**, confirmed by the user: keys and icons, changing
 and saving a key, a second save without reload, persistence after reload, portrait/landscape and
-Home Screen behavior. **S5 documentation alignment is implemented, pending Steering acceptance**.
-S6 and S7 remain **NOT STARTED**; no production cutover has occurred.
+Home Screen behavior. **S1–S7 are ACCEPTED by Steering**, including S5 documentation,
+S6 isolated acceptance and S7 production cutover. Phase A is complete.
 
 S4 automated evidence: **52/52 focused tests** in four suites and **388/388 full-suite tests** in
 41 suites pass with the documented CLT Testing framework. JavaScriptCore executes the shipped
@@ -297,20 +297,27 @@ ECMAScript 5; the layout, tap, key-rendering and editor-interaction functions ma
 release build passes with zero warnings. Tests deny access to the real configuration directory;
 no production server was started or stopped. These checks do not replace physical iPhone evidence.
 
-S4 isolated device staging verified migration-on-GET, HTTPS using a mode-preserving copy of the
-existing TLS material, matching LAN-IP certificate coverage, and three fixture-app PNG icons on
-8055/8057/8058. The isolated process used a temporary configuration directory and fresh token;
+S4 isolated device staging (historical, before S7) verified migration-on-GET, HTTPS using a
+mode-preserving copy of the existing TLS material, matching LAN-IP certificate coverage, and three
+fixture-app PNG icons on 8055/8057/8058. The isolated process used a temporary configuration directory and fresh token;
 access to production configuration was denied for that process. **Teardown PASS**: only the owned
 isolated instance was stopped, the verified fixture directory and logs were removed, and all 16
 production entries matched baseline SHA-256, permissions and modification/change timestamps.
 Production listener inventory was unchanged and Git remained clean at `d0d8747`. No production
 files were migrated, no production process was stopped/restarted, and no cutover occurred.
 
-**Remaining gates:** Steering reviews S5 against the implementation; S6 still requires the
-remaining §12.2 isolated acceptance evidence, including preservation/failure-state, stale-tab and
-dual-instance concurrency scenarios. S4's physical happy-path checks and teardown do not close S6.
-S7 requires separate authorization for production migration/cutover and rollback rehearsal. M2.5
-and M2 remain IN PROGRESS until their remaining gates are accepted.
+**Closure evidence — Steering confirmation (2026-11-08).** The following production and device
+results are recorded from Steering's confirmation; Phase B does not rerun these operations.
+
+- **S7 production cutover / migration: PASS.**
+- **Rollback rehearsal: PASS.**
+- **Production authentication rotation: PASS.** New authenticated access works on the physical
+  iPhone 11; the previous token is rejected. No credential values or authenticated URLs are recorded.
+- **Physical iPhone 11 acceptance: PASS.**
+
+M2.5 is complete. This documentation consolidation is submitted for Steering acceptance through
+one PR targeting `main`; merge and branch deletion are not authorized. The parent M2 status is
+unchanged, and no new milestone work is authorized.
 
 **S1 delivery record (historical).** S1 added `Sources/oldphonedeck/ConfigurationStore.swift`
 without wiring it into the application. At that slice the legacy `Launcher` remained active,
@@ -367,10 +374,10 @@ reload the revised page before the first post-cutover save.
 
 M2 overall remains **IN PROGRESS**.
 
-M2 is **not complete**. M2.1, M2.2, M2.3 and M2.4 are accepted; the Action Registry currently
-supports only app launch, and versioned configuration is wired end to end **on the feature branch**
-(store, route, wire contract and accepted client). S5 documentation awaits Steering acceptance;
-S6 isolated acceptance and S7 production cutover remain open.
+M2 is **not complete**. M2.1–M2.4 and M2.5 S1–S7 are accepted; the Action Registry currently
+supports only app launch, and versioned configuration is wired end to end with accepted production
+cutover (store, route, wire contract and client). M2.5 closure does not extend M2's scope or begin
+another milestone.
 M5 remains the independent security/reliability review. Physical iPhone 11 checks passed
 for WSS streaming, camera frames reaching the Mac, fresh-frame delivery, front/back
 switching, reconnection and deck polling. Continuous live MJPEG was not confirmed on

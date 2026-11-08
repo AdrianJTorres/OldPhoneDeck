@@ -733,11 +733,13 @@ read path does not otherwise have). Blocking on the lock. `F_FULLFSYNC` per save
 
 ## Implementation note — ADR-016 / M2.5 S1
 
-**Current status:** S1, S1b and S2–S4 are accepted by Steering on
+**Current status (2026-11-08): M2.5 COMPLETE; S1–S7 accepted by Steering** on
 `m2.5/s1-configuration-store` (S4 code: `d0d8747`). The store is wired into GET/POST `/launcher`
-and the ES5 client consumes state and revisions. S4 physical iPhone 11 checks and isolated teardown
-passed; production files were unchanged. S5 documentation awaits Steering acceptance; S6/S7 remain
-pending and no production cutover has occurred. ADR-016 remains accepted as originally recorded.
+and the ES5 client consumes state and revisions. Steering confirms production migration/cutover,
+rollback rehearsal, production authentication rotation and physical iPhone 11 acceptance **PASS**.
+New authenticated access works on that device; the previous token is rejected. Phase A is complete;
+Phase B records these results for GitHub consolidation without further production operations.
+ADR-016 and all other approved ADR decisions remain accepted as originally recorded.
 
 **S1 delivery history:** S1 introduced `Sources/oldphonedeck/ConfigurationStore.swift` unwired;
 at that slice the legacy `Launcher` remained the runtime path, the codec and endpoints were
@@ -781,5 +783,3 @@ Nonblocking documentation debt carried forward: `AGENTS.md` §2 still has no `Co
 row and now also needs one for `ConfigurationStore.swift`. That file is protected against agent
 edits in this workflow, so both rows need a human edit. `docs/ARCHITECTURE.md` §3 carries the
 equivalent rows.
-
-

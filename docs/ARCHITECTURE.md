@@ -1,17 +1,17 @@
 # ARCHITECTURE.md — PhoneDeck
 
-Architecture reference for the **implemented feature branch** `m2.5/s1-configuration-store`
-(S1–S4 code at `d0d8747`), not a claim about a production deployment. The upstream baseline is
-`e622184`. M2.1–M2.4 and M2.5 S1–S4 are accepted by Steering; M2.5 remains **IN PROGRESS**.
-The V1 codec (ADR-015), active `ConfigurationStore` and revision-aware ES5 client (ADR-016)
-are wired end to end. `Launcher.selected()` / `Launcher.save()` are retired.
+Architecture reference for M2.5 on `m2.5/s1-configuration-store` (S1–S4 code at `d0d8747`).
+The upstream baseline is `e622184`. M2.1–M2.4 and M2.5 S1–S7 are accepted by Steering;
+**M2.5 is COMPLETE (2026-11-08)**. The V1 codec (ADR-015), active `ConfigurationStore` and
+revision-aware ES5 client (ADR-016) are wired end to end.
+`Launcher.selected()` / `Launcher.save()` are retired.
 
-S4 physical iPhone 11 checks passed by user confirmation: portrait and landscape, keys/icons,
-repeated saves without reloading, reload persistence and Home Screen behavior. The isolated
-instance was torn down; production hashes, permissions and modification/change timestamps matched
-the pre-test baseline. S5 aligns these docs; **S6 acceptance and S7 separately authorized production
-cutover remain pending**. No production migration or deployment is claimed. M2.2 physical audio
-and continuous live MJPEG remain unverified; S4 does not close those gaps or the M5 review.
+Steering confirms **PASS** for production migration/cutover, rollback rehearsal, production
+authentication rotation and physical iPhone 11 acceptance. New authenticated access works on the
+physical iPhone 11 and the previous token is rejected. Phase A is complete; these are recorded
+acceptance results, not operations performed by the Phase B documentation consolidation.
+M2.2 physical audio and continuous live MJPEG remain unverified; M2.5 does not close those gaps
+or the M5 review.
 
 - Current behavior: §1–§8, §10–§11
 - Known limitations: §12
@@ -390,7 +390,7 @@ boundary that resolves a server-authored identifier, validates parameters and au
 against the Mac's own app catalog before a controlled executor runs. That boundary covers
 app launch only; the other action-shaped routes still validate inline in the switch.
 
-**Configuration boundary (M2.5 S1–S4, accepted on the feature branch).** Saving no longer applies
+**Configuration boundary (M2.5, accepted and cut over to production).** Saving no longer applies
 `Apps.isKnown`: preservation is not authorization (ADR-016 rule 11). Every launch still passes
 the registry's fresh catalog check. Regular-file checks with `O_NOFOLLOW | O_NONBLOCK`, bounded
 reads (1 MiB plus a detection byte), non-blocking advisory locking and locked revision comparison
@@ -398,9 +398,9 @@ protect the store's intended boundary; they do not defend against an arbitrary l
 Revisions fingerprint canonical content, so whitespace-only changes and lossless migration do not
 invalidate a client. The 64-bit fingerprint is concurrency control, not authentication or integrity.
 
-The M1 absent/unparseable configuration finding is **closed in the implemented branch**: the shared
+The M1 absent/unparseable configuration finding is **closed**: the shared
 GET response distinguishes absence, damage, unsupported versions and read-only states, and the ES5
-page displays a warning and blocks saves. This is not a production-deployment claim; S7 is pending.
+page displays a warning and blocks saves. S7 production migration/cutover is accepted by Steering.
 
 **Open risks carried from M1.** Each risk is owned by a milestone, and ownership is not
 interchangeable:
@@ -434,7 +434,7 @@ MEDIUM
 | Frontend geometry and `APP_SLOTS` are hardcoded | `index.html` `layout`, `renderKeys` |
 | One serial queue serves both listeners; full app-directory rescan per icon/launch request | `HTTPServer.queue`, `Apps.list()` |
 | Action authorization compares exact catalog path **strings** and pins no filesystem object. Catalog entries may be symlinks, and the target could change before the asynchronous launch (TOCTOU). Inherited unchanged from the pre-M2.3 route; no HTTP-only exploit identified. Resolution or acceptance is **M5** — see the M2.3 implementation note in `docs/DECISIONS.md`. | `Apps.list/isKnown/launch`, `ActionRegistry.dispatch` |
-| Parser/resource, action, codec/store, HTTP and client logic have automated coverage; hardware audio playback and CI remain absent. S4 physical UI acceptance does not establish complete S6 acceptance. | `Tests/oldphonedeckTests`, repository |
+| Parser/resource, action, codec/store, HTTP and client logic have automated coverage; hardware audio playback and CI remain absent. S6 acceptance and S7 production cutover are accepted by Steering; hardware audio remains unverified. | `Tests/oldphonedeckTests`, repository |
 | Accessibility key press is time-based (fixed 2 s delay + frontmost check) | `Claude.ask` |
 | TLS identity is re-issued only at startup, so an IP change degrades to HTTP-only | `LocalTLS.identity` |
 
@@ -473,8 +473,8 @@ material with modes preserved instead of sharing production paths, verify the ce
 IP, and let the isolated process mint its own token. The acceptance triple is 8055/8057/8058;
 8057 is a separate browser origin from production 8047. Snapshot production hashes and metadata
 beforehand and verify them at teardown; stop and remove only the owned instance and fixtures.
-S4 completed that preparation/device/teardown sequence successfully. This document performs none
-of those operations; S6's remaining acceptance scenarios and S7 cutover need their own execution.
+S4 completed that preparation/device/teardown sequence successfully. S6 acceptance and S7 production
+cutover/rollback rehearsal are now accepted by Steering; this document performs none of those operations.
 
 In memory only: 60 s of network history, speed-test result, battery list, now-playing
 snapshot, latest camera frame, MJPEG viewer registry, icon cache. Nothing is written
@@ -532,8 +532,8 @@ These are structural, not bugs to fix in passing:
    not arbitrary controls, titles or custom ids. Unprojectable documents and selections above
    seven controls are read-only. Unknown actions remain inert; no new action capability is added.
    Frozen `launcher.json` is a compatibility/recovery artifact, not a second writable source.
-   Production cutover is pending; running the feature binary against the default directory would
-   activate its migration-on-GET path and is separately authorized S7 work.
+   S7 production cutover is complete and accepted; migration-on-GET remains part of the store
+   behavior. No further production operation is authorized by this documentation.
 3. No collector abstraction — `Stats` and `Music` happen to follow the same pattern, but
    `/stats` composes them by hand.
 4. M2.1 bounds HTTP parsing and moves auth before bodies; M2.2 bounds connection/media
@@ -549,12 +549,12 @@ These are structural, not bugs to fix in passing:
 Approved direction (see `docs/DECISIONS.md` ADR-005 to ADR-010, and ADR-015 for the
 configuration document shape and ADR-016 for storage). The M2.1 admission, M2.2 resource,
 M2.3 app-action boundary, M2.4 codec and M2.5 S1–S4 storage/route/client portions are implemented.
-The remaining capabilities below are planned; production cutover is still pending.
+Production cutover is complete; the remaining capabilities below are planned.
 
 | Seam | Milestone | Shape |
 |---|---|---|
 | **Action boundary** | M2 (foundational) — `app.launch` implemented and accepted in M2.3 | An internal representation of an approved action — identifier, display metadata, validated parameters, server-side execution allowlist. `ActionRegistry` now carries this for app launch only; Shortcuts, developer and Git actions become implementations of it in later slices. No arbitrary shell execution. |
-| **Versioned configuration** | M2.4 codec and M2.5 S1–S4 store/route/client implemented and accepted; S6/S7 pending | V1 is active through `ConfigurationStore` and the shared launcher handler. Source-aware migration preserves frozen legacy bytes; canonical revisions, locking, atomic replacement, backup and verified recovery protect edits. The ES5 client consumes state and refreshed revisions but remains a seven-slot path-list editor. Decoding or storing a path confers no execution authority. See §7 and §10; no production deployment is claimed. |
+| **Versioned configuration** | M2.4 codec and M2.5 S1–S7 complete and accepted | V1 is active through `ConfigurationStore` and the shared launcher handler. Source-aware migration preserves frozen legacy bytes; canonical revisions, locking, atomic replacement, backup and verified recovery protect edits. The ES5 client consumes state and refreshed revisions but remains a seven-slot path-list editor. Decoding or storing a path confers no execution authority. See §7 and §10; S7 production cutover is accepted. |
 | **Ingress / auth hardening** | M2.1 admission and M2.2 resource bounds implemented; remaining M2 → M5 | Bounded headers/body, early query-token auth, receive/auth deadlines, connection/media caps and bounded frame/audio buffering. M2.2 passed independent review and Steering acceptance. Action authorization exists for app launch (M2.3, accepted); the remaining routes and the unscoped token belong to M5's independent T3 assessment and hardening. |
 | **Collector boundary** | Just-in-time with M4 telemetry | Registry of collectors (each with its own queue) composed into one snapshot, so Git/agent status does not edit the route table. |
 | **Frontend data model** | M3 | Data-driven controls and widgets, layout described rather than hand-computed — while staying one ES5 file with no framework. |
