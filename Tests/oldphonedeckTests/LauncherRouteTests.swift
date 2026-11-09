@@ -234,6 +234,82 @@ struct LauncherRouteStoreWiringTests {
         try client.reply(String(response[separator.upperBound...]), status: status)
     }
 
+    @Test func widgetsOnlySaveAfterDeferredLegacyMigrationPreservesAllSixSelections() throws {
+        let directory = try temporaryStoreDirectory()
+        defer { removeStoreDirectory(directory) }
+        let paths = (1...6).map { "/Legacy\($0).app" }
+        let frozen = try seedLegacy(directory, paths)
+        var operations = ConfigurationFileOperations.live
+        let live = operations
+        let firstCommit = OneShot()
+        operations.commitDocument = { prepared, destination in
+            if firstCommit.consume() { return false }
+            return live.commitDocument(prepared, destination)
+        }
+        let store = ConfigurationStore(directory: directory, operations: operations)
+        let (server, port) = try startServer(store: store)
+        defer { server.stop() }
+        let pending = try jsonBody(get(port: port))
+        #expect(pending["configuration"] as? String == "legacy-pending")
+        #expect(pending["writable"] as? Bool == true)
+        #expect(pending["selected"] as? [String] == paths)
+        #expect(!fileExists(store.configurationPath))
+        let revision = try #require(pending["revision"] as? String)
+        let saved = try jsonBody(post(port: port, body: "internet=0&batteries=1&expected=\(revision)"))
+        #expect(saved["selected"] as? [String] == paths)
+        #expect(saved["saved"] as? Int == 6)
+        #expect(saved["widgets"] as? [String: Bool] == ["internet": false, "batteries": true])
+        guard case .v2(let document) = ConfigurationDecoder.decode(.data(Data(try #require(readBytes(at: store.configurationPath))))) else {
+            Issue.record("deferred migration did not commit V2"); return
+        }
+        #expect(document.controls == (try appDocumentFrom(paths: paths)).controls)
+        #expect(readBytes(at: store.legacyPath) == frozen)
+        #expect(!fileExists(store.backupPath))
+        #expect(leftoverTemporaries(directory).isEmpty)
+    }
+
+    @Test func widgetWireContractPreservesSixAppsAndRefusesBadFlagsWithoutWriting() throws {
+        let directory = try temporaryStoreDirectory()
+        defer { removeStoreDirectory(directory) }
+        try seedConfiguration(directory, appDocument(count: 6))
+        let store = ConfigurationStore(directory: directory)
+        let (server, port) = try startServer(store: store)
+        defer { server.stop() }
+        let initial = try jsonBody(get(port: port))
+        var revision = try #require(initial["revision"] as? String)
+        let selected = try #require(initial["selected"] as? [String])
+        #expect(selected.count == 6)
+        for internet in ["0", "1"] {
+            for batteries in ["0", "1"] {
+                let response = try post(port: port, body: "internet=\(internet)&batteries=\(batteries)&expected=\(revision)")
+                let json = try jsonBody(response)
+                #expect(json["selected"] as? [String] == selected)
+                let flags = try #require(json["widgets"] as? [String: Bool])
+                #expect(flags == ["internet": internet == "1", "batteries": batteries == "1"])
+                revision = try #require(json["revision"] as? String)
+            }
+        }
+        let bytes = readBytes(at: store.configurationPath)
+        for bad in ["internet=1", "batteries=0", "internet=true&batteries=0", "internet=0&batteries=01",
+                    "internet=&batteries=1", "internet=2&batteries=1"] {
+            let response = try post(port: port, body: bad + "&expected=\(revision)")
+            #expect(response.hasPrefix("HTTP/1.1 400"))
+            #expect(response.hasSuffix("invalid-widgets"))
+            #expect(readBytes(at: store.configurationPath) == bytes)
+        }
+        let missing = try post(port: port, body: "internet=0&batteries=0")
+        #expect(missing.hasPrefix("HTTP/1.1 400"))
+        #expect(missing.hasSuffix("missing-revision"))
+        let changed = try jsonBody(post(port: port, body: "internet=0&batteries=0&expected=\(revision)"))
+        let stale = try post(port: port, body: saveBody(["/Stale.app"], expected: revision))
+        #expect(stale.hasPrefix("HTTP/1.1 409"))
+        #expect(stale.hasSuffix("stale"))
+        let latestRevision = try #require(changed["revision"] as? String)
+        let oldClientSave = try jsonBody(post(port: port, body: saveBody(selected.reversed(), expected: latestRevision)))
+        #expect(oldClientSave["widgets"] as? [String: Bool] == ["internet": false, "batteries": false])
+        #expect(oldClientSave["selected"] as? [String] == selected.reversed())
+    }
+
     @Test func shippedClientEditsTwiceThroughTheStoreWithoutAnInterveningGet() throws {
         let directory = try temporaryStoreDirectory()
         defer { removeStoreDirectory(directory) }
@@ -268,7 +344,7 @@ struct LauncherRouteStoreWiringTests {
         try deliver(second, to: client)
         #expect(try client.run("launcher.selected").toArray() as? [String] == paths)
         #expect(try client.run("cfg.revision").toString() != revision)
-        #expect(try client.run("notices[notices.length - 1]").toString() == "Keys saved")
+        #expect(try client.run("notices[notices.length - 1]").toString() == "Deck saved")
         #expect(ConfigurationStore(directory: directory).load().selected == paths)
     }
 
@@ -370,7 +446,7 @@ struct LauncherRouteStoreWiringTests {
         #expect(json["selected"] as? [String] == draft)
         // The catalog survives the save: renderKeys()/byPath() resolve against `all`.
         #expect(json["all"] as? [[String: String]] == catalog)
-        #expect(json["configuration"] as? String == "v1")
+        #expect(json["configuration"] as? String == "v2")
         #expect(json["writable"] as? Bool == true)
         let secondRevision = try #require(json["revision"] as? String)
         #expect(secondRevision != firstRevision)
@@ -468,14 +544,14 @@ struct LauncherRouteStoreWiringTests {
     @Test func anUnsupportedVersionCarriesTheIntegerDiagnosisAndRefusesSaves() throws {
         let directory = try temporaryStoreDirectory()
         defer { removeStoreDirectory(directory) }
-        let future = "{\"version\":2,\"controls\":[]}"
+        let future = "{\"version\":3,\"controls\":[]}"
         try writeText(future, to: storePath(directory, ConfigurationStore.configurationName))
         let (server, port) = try startServer(store: ConfigurationStore(directory: directory))
         defer { server.stop() }
 
         let json = try jsonBody(try get(port: port))
         #expect(json["configuration"] as? String == "unsupported-version")
-        #expect(json["version"] as? Int == 2)
+        #expect(json["version"] as? Int == 3)
         #expect(json["writable"] as? Bool == false)
         #expect(json["selected"] is NSNull)
         let revision = try #require(json["revision"] as? String)
@@ -678,7 +754,7 @@ struct LauncherRouteStoreWiringTests {
         // A follow-up GET returns the same array, and the stored document round-trips.
         let reread = try jsonBody(try get(port: port))
         #expect(reread["selected"] as? [String] == selection)
-        #expect(reread["configuration"] as? String == "v1")
+        #expect(reread["configuration"] as? String == "v2")
     }
 
     @Test func anUnconfiguredDirectorySavesAnEmptySelection() throws {
@@ -696,7 +772,7 @@ struct LauncherRouteStoreWiringTests {
         #expect(json["saved"] as? Int == 0)
         // An empty selection is an empty array, not null: null means "cannot be expressed".
         #expect(json["selected"] as? [String] == [])
-        #expect(json["configuration"] as? String == "v1")
+        #expect(json["configuration"] as? String == "v2")
     }
 
     // MARK: Syntax refusals (route level, before any store access)

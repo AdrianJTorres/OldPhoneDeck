@@ -186,7 +186,7 @@ struct V1DecodeTests {
 // MARK: C. Version handling
 
 struct VersionHandlingTests {
-    @Test(arguments: [2, 3, 99, 1000])
+    @Test(arguments: [3, 4, 99, 1000])
     func aNewerVersionIsUnsupportedNotMalformed(_ version: Int) {
         let json = "{\"version\":\(version),\"controls\":[]}"
         #expect(decode(json) == .unsupportedVersion(found: version))
@@ -194,10 +194,10 @@ struct VersionHandlingTests {
     }
 
     @Test func aFutureVersionIsIdentifiedBeforeUnknownKeyChecks() {
-        // A V2 document will legitimately carry keys V1 has never heard of. Reporting "unknown key"
+        // A future document can legitimately carry keys this build has never heard of. Reporting "unknown key"
         // would tell the user their file is corrupt when the truth is that it is newer.
-        let json = #"{"version":2,"layout":{"rows":3},"unexpected":true,"controls":[]}"#
-        #expect(decode(json) == .unsupportedVersion(found: 2))
+        let json = #"{"version":3,"layout":{"rows":3},"unexpected":true,"controls":[]}"#
+        #expect(decode(json) == .unsupportedVersion(found: 3))
     }
 
     @Test func aFutureVersionIsIdentifiedBeforeStructuralChecks() {
@@ -926,7 +926,7 @@ struct SecurityInvariantTests {
         // consumer can mistake a corrupt or newer file for a fresh installation.
         let distinct: [ConfigurationState] = [.absent, .unreadable, .legacy([]),
                                               .v1(DeckConfigurationV1(controls: [])),
-                                              .malformed(.notJSON), .unsupportedVersion(found: 2)]
+                                              .malformed(.notJSON), .unsupportedVersion(found: 3)]
         for (index, state) in distinct.enumerated() {
             for (other, otherState) in distinct.enumerated() where other != index {
                 #expect(state != otherState)

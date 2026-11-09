@@ -122,6 +122,23 @@ struct DeckConfigurationV1: Equatable {
     var controls: [DeckControl]
 }
 
+/// Two fixed presentation preferences. They never describe or authorize an action.
+struct WidgetPreferences: Equatable {
+    var internet: Bool
+    var batteries: Bool
+
+    static let visible = WidgetPreferences(internet: true, batteries: true)
+}
+
+struct DeckConfigurationV2: Equatable {
+    static let version = 2
+    var controls: [DeckControl]
+    var widgets: WidgetPreferences = .visible
+
+    /// A complete controls envelope, not a path-list projection. Used for lossless rollback.
+    var v1: DeckConfigurationV1 { DeckConfigurationV1(controls: controls) }
+}
+
 // MARK: Failure model
 
 /// Why a document was rejected.
@@ -131,6 +148,7 @@ struct DeckConfigurationV1: Equatable {
 /// `ActionOutcome`'s rule that failures carry no client-supplied detail. The cost is coarser
 /// diagnostics: the file is on the Mac's own disk and can be read.
 enum ConfigurationError: Error, Equatable {
+    case invalidWidgets
     case notJSON
     /// The document nests deeper than any V1 value can, so the scanner stops rather than risking
     /// the stack. A depth bound is a safety property of reading untrusted bytes, not a schema cap.
@@ -183,6 +201,7 @@ enum ConfigurationState: Equatable {
     case unreadable
     case legacy([String])
     case v1(DeckConfigurationV1)
+    case v2(DeckConfigurationV2)
     case malformed(ConfigurationError)
     /// A versioned document from a newer PhoneDeck. Distinct from `.malformed` so the user can be
     /// told to upgrade rather than told their file is broken.
@@ -594,6 +613,14 @@ enum ExactJSONNumber {
 /// the same bytes. That is what makes the size contract hold: a document the decoder accepts can
 /// always be encoded unchanged, instead of being valid on disk one way and unsaveable the other.
 enum ConfigurationCanonicalForm {
+    static func data(_ configuration: DeckConfigurationV2) -> Data? {
+        var object = documentObject(configuration.v1)
+        object["version"] = DeckConfigurationV2.version
+        object["widgets"] = ["internet": configuration.widgets.internet,
+                             "batteries": configuration.widgets.batteries]
+        return try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])
+    }
+
     static func data(_ configuration: DeckConfigurationV1) -> Data? {
         try? JSONSerialization.data(withJSONObject: documentObject(configuration),
                                     options: [.prettyPrinted, .sortedKeys])
@@ -672,18 +699,36 @@ enum ConfigurationDecoder {
         // `NSNumber` that has already been rounded. See `ExactJSONNumber`.
         guard case .number(let literal) = versionValue,
               let version = ExactJSONNumber.exactInteger(literal) else { return .malformed(.invalidVersion) }
-        guard version <= DeckConfigurationV1.version else { return .unsupportedVersion(found: version) }
+        guard version <= DeckConfigurationV2.version else { return .unsupportedVersion(found: version) }
         // No version below 1 ever existed: a legacy document is a bare array with no version at
         // all. So 0 and -3 are corrupt, not "from the future".
-        guard version == DeckConfigurationV1.version else { return .malformed(.invalidVersion) }
+        guard version >= DeckConfigurationV1.version else { return .malformed(.invalidVersion) }
 
-        guard members.allSatisfy({ documentKeys.contains($0.0) }) else { return .malformed(.unknownKey) }
+        let keys = version == 2 ? documentKeys.union(["widgets"]) : documentKeys
+        guard members.allSatisfy({ keys.contains($0.0) }) else { return .malformed(.unknownKey) }
         guard let controlsValue = root.member("controls") else { return .malformed(.missingControls) }
         guard case .array(let controlArray) = controlsValue else { return .malformed(.controlsNotArray) }
         guard controlArray.count <= maximumControlCount else { return .malformed(.tooManyControls) }
 
         switch controls(controlArray) {
         case .success(let controls):
+            if version == DeckConfigurationV2.version {
+                guard let widgetMembers = root.member("widgets")?.objectMembers else {
+                    return .malformed(.invalidWidgets)
+                }
+                guard widgetMembers.allSatisfy({ ["internet", "batteries"].contains($0.0) }) else {
+                    return .malformed(.unknownKey)
+                }
+                guard case .bool(let internet) = root.member("widgets")?.member("internet"),
+                      case .bool(let batteries) = root.member("widgets")?.member("batteries") else {
+                    return .malformed(.invalidWidgets)
+                }
+                let configuration = DeckConfigurationV2(controls: controls,
+                    widgets: WidgetPreferences(internet: internet, batteries: batteries))
+                guard let canonical = ConfigurationCanonicalForm.data(configuration),
+                      canonical.count <= maximumDocumentBytes else { return .malformed(.documentTooLarge) }
+                return .v2(configuration)
+            }
             let configuration = DeckConfigurationV1(controls: controls)
             // Canonical size contract: a document is accepted only if the form this codec would
             // write it back in also fits the cap. Pretty-printing expands a compact document, so
@@ -806,6 +851,19 @@ enum ConfigurationDecoder {
 /// two directions therefore cannot drift apart, and an in-memory configuration that could not be
 /// read back is rejected here rather than persisted and discovered on the next launch.
 enum ConfigurationEncoder {
+    static func encode(_ configuration: DeckConfigurationV2) throws -> Data {
+        try verifiedData(configuration).get()
+    }
+
+    static func verifiedData(_ configuration: DeckConfigurationV2) -> Result<Data, ConfigurationError> {
+        guard let data = ConfigurationCanonicalForm.data(configuration) else { return .failure(.notSerializable) }
+        switch ConfigurationDecoder.decode(.data(data)) {
+        case .v2(let decoded) where decoded == configuration: return .success(data)
+        case .malformed(let error): return .failure(error)
+        default: return .failure(.encoderRoundTripMismatch)
+        }
+    }
+
     static func encode(_ configuration: DeckConfigurationV1) throws -> Data {
         switch verifiedData(configuration) {
         case .success(let data): return data
@@ -831,6 +889,26 @@ enum ConfigurationEncoder {
 /// ADR-007's "migration runs on read" is realized by the M2.5 storage layer, which supplies the
 /// bytes and decides what to persist. `launcher.json` is left on disk untouched.
 enum ConfigurationMigrator {
+    static func migrateToV2(_ configuration: DeckConfigurationV1) -> Result<DeckConfigurationV2, ConfigurationError> {
+        // Validate the source too: this public pure function can receive hand-built values.
+        ConfigurationEncoder.verifiedData(configuration).flatMap { _ in
+            let migrated = DeckConfigurationV2(controls: configuration.controls)
+            return ConfigurationEncoder.verifiedData(migrated).map { _ in migrated }
+        }
+    }
+
+    static func migrateToV2(_ paths: [String]) -> Result<DeckConfigurationV2, ConfigurationError> {
+        migrateToV1(paths).flatMap { migrateToV2($0) }
+    }
+
+    /// Explicit export only; no store or route calls this to downgrade automatically. Widget
+    /// preferences are intentionally omitted, while every latest control must survive exactly.
+    static func exportV1(_ configuration: DeckConfigurationV2) -> Result<Data, ConfigurationError> {
+        ConfigurationEncoder.verifiedData(configuration).flatMap { _ in
+            ConfigurationEncoder.verifiedData(configuration.v1)
+        }
+    }
+
     /// A legacy launcher selection — a bare ordered array of application paths — as a V1 document.
     ///
     /// Purely syntactic: no `Apps.list()`, no `Apps.isKnown`, no normalization, no sorting, no

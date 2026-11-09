@@ -265,6 +265,7 @@ enum DeckRoute: CaseIterable {
         let p = request.params
         if request.method == "POST", request.path == "/launcher" {
             // Revision and state checks stay under the store's lock, in refusal order.
+            if case .failure(let failure) = LauncherRoute.parseWidgets(p) { return failure }
             return LauncherRoute.parseSelection(p).failure
         }
         if request.path == "/launch", (p["path"] ?? "").utf8.count > 4096 {

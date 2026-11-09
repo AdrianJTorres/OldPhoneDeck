@@ -401,7 +401,7 @@ Exit criteria: existing behaviour preserved on the iPhone 11; build clean; ADRs 
 **STATUS: IN PROGRESS**
 
 **M3.1 — Media-first iPhone UI:** implementation accepted by Steering after physical iPhone 11
-validation PASS (2026-11-08); GitHub consolidation is pending integration review. Implemented in
+validation PASS (2026-11-08); GitHub consolidation merged at `14872a3a`. Implemented in
 `bd73790b9c00b6322b042b89fdff16a0efe58490` on `m3.1/media-ui`.
 The existing music card leads the portrait deck and sits
 beside the keys in wide landscape. Larger metadata, artwork and transport controls reuse
@@ -425,10 +425,55 @@ launch. **Apple Music was not physically tested**; no physical acceptance is cla
 The automated results above are retained from the implementation record; broad tests were not
 rerun for this documentation consolidation. No additional physical checks are inferred.
 
-Current integration status: the accepted implementation is being consolidated for one PR from
-`m3.1/media-ui` to `main`, pending Steering review. Merge and production deployment are not
-authorized by this consolidation. The existing production server is left running. M3 overall
-remains **IN PROGRESS**; later M3 work is not authorized by this acceptance.
+Current integration status: approved M3.1 merge `14872a3a` is on `origin/main`; Steering
+reports M3.1 production **ACCEPTED**. M3.2.1 leaves that production server unchanged.
+M3 overall remains **IN PROGRESS**; acceptance of M3.1 does not accept later slices.
+
+**M3.2.1 — Configurable Widgets V2: physical iPhone 11 acceptance PASS; GitHub consolidation pending Steering acceptance.**
+Architecture approved by Steering on 2026-11-08 (ADR-017); based on approved M3.1 merge
+`14872a3a`, branch `m3.2/widgets-v2`, Codex WRITE_OWNER. Two fixed Internet/Batteries
+visibility flags persist through the existing revision-aware store and ES5 Save/Cancel editor.
+V1 controls and metadata migrate intact; immutable V1 snapshot and explicit latest-controls
+V1 export support a separately authorized rollback. No production configuration/token/TLS/server
+is touched, no deployment or merge is authorized, and M3.1 production remains accepted.
+
+Automated validation: **405 Swift Testing tests in 43 suites PASS**, including V2 codec/migration,
+metadata preservation, four combinations, paired-field refusals, stale/mixed concurrent writes,
+failed-write recovery, snapshot retention and latest-controls V1 export. Release build passes with
+zero warnings. The complete inline script parses as ES5 with the existing Node-bundled Acorn;
+real browser checks against isolated HTTPS pass long-press, Save/Cancel, all four combinations,
+reload and six unchanged controls. Five viewport cases retain geometry, eight keys and effective
+media targets ≥44 CSS px; app/media callbacks were intercepted before reaching the Mac.
+An isolated M3.1 binary refuses V2 and serves all six latest selections after explicit restoration
+of the actual pure exporter output. No automatic downgrade or production material is used.
+The independent review identified a visibility-only save from writable `legacy-pending` that
+could discard the six pending legacy selections after a transient GET migration failure. The
+owner fixed preservation of the pending document and added a real HTTP GET/failure/POST
+regression; the 405-test result above includes it.
+The **single independent focused review PASS** covers final implementation
+`7c50e3e1f47e69350b898a7186d562d5f3e4e90f` against `14872a3a`. A fresh read-only Codex reviewer
+inspected codec/store/wire integrity and rollback, the owner correction, regression and validation
+receipts. The one major finding above is closed; no unresolved blockers, major or minor findings
+remain. The reviewer did not author fixes, run builds or create files. Implementation acceptance
+remains Steering's decision.
+
+Isolated HTTPS validation used a synthetic six-app configuration, a separate token and CA,
+and a process sandbox denying production configuration access. Automated server-restart checks
+preserved hidden preferences, six selections, revision, document bytes and immutable V1 snapshot.
+Local preview configuration, credentials, certificates, snapshots and validation artifacts remain
+outside the repository and are excluded from the PR.
+
+**Physical iPhone 11 acceptance PASS**, confirmed by Steering on 2026-11-09. The user verified
+all six existing applications preserved; Save and Cancel; all four widget visibility combinations;
+persistence after reload; restoration of both widgets; Spotify, Claude and Phone regression;
+portrait, landscape and Home Screen. These are user-reported physical results, distinct from the
+automated checks above. No additional physical checks or production V2 migration are inferred.
+
+GitHub consolidation records that physical acceptance and aligns status notes only. The reviewed
+implementation and approved ADR-017 are unchanged. Focused documentation/diff checks are run;
+the existing 405-test, release-build and independent-review results are retained without rerunning
+the broad suite or requesting another review. The PR targets `main` for Steering acceptance;
+merge, deployment, production migration and stopping the active M3.1 server are not authorized.
 
 Turn the deck into the intended iPhone 11 control surface.
 

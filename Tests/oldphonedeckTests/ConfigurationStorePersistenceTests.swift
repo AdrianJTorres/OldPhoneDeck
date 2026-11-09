@@ -86,7 +86,7 @@ func tornWriteOperations(garbage: [UInt8]) -> ConfigurationFileOperations {
 
         // The committed document is exactly what a migration produces, and it decodes.
         let committed = try #require(readBytes(at: storePath(directory, ConfigurationStore.configurationName)))
-        guard case .v1(let document) = ConfigurationDecoder.decode(.data(Data(committed))) else {
+        guard case .v2(let document) = ConfigurationDecoder.decode(.data(Data(committed))) else {
             Issue.record("the migrated document does not decode as V1")
             return
         }
@@ -118,7 +118,7 @@ func tornWriteOperations(garbage: [UInt8]) -> ConfigurationFileOperations {
         let second = store.load()
 
         #expect(first.status == .migrated)
-        #expect(second.status == .v1)
+        #expect(second.status == .v2)
         #expect(second.revision == first.revision)
         #expect(second.selected == first.selected)
         // Idempotent: nothing was rewritten.
@@ -137,7 +137,7 @@ func tornWriteOperations(garbage: [UInt8]) -> ConfigurationFileOperations {
         // entry would shift every later key.
         #expect(read.selected == paths)
         let committed = try #require(readBytes(at: storePath(directory, ConfigurationStore.configurationName)))
-        guard case .v1(let document) = ConfigurationDecoder.decode(.data(Data(committed))) else {
+        guard case .v2(let document) = ConfigurationDecoder.decode(.data(Data(committed))) else {
             Issue.record("the migrated document does not decode as V1")
             return
         }
@@ -172,7 +172,7 @@ func tornWriteOperations(garbage: [UInt8]) -> ConfigurationFileOperations {
         let read = ConfigurationStore(directory: directory, operations: operations).load()
 
         // It adopted rather than committed, so it reports the document, not a migration.
-        #expect(read.status == .v1)
+        #expect(read.status == .v2)
         #expect(read.selected == paths)
         #expect(read.writable)
         let winner = try appDocumentFrom(paths: paths)
@@ -209,7 +209,7 @@ func tornWriteOperations(garbage: [UInt8]) -> ConfigurationFileOperations {
 
         // The committed document is exactly what the new legacy file produces.
         let committed = try #require(readBytes(at: storePath(directory, ConfigurationStore.configurationName)))
-        guard case .v1(let document) = ConfigurationDecoder.decode(.data(Data(committed))) else {
+        guard case .v2(let document) = ConfigurationDecoder.decode(.data(Data(committed))) else {
             Issue.record("the migrated document does not decode as V1")
             return
         }
@@ -409,7 +409,7 @@ func tornWriteOperations(garbage: [UInt8]) -> ConfigurationFileOperations {
             return
         }
         #expect(after.selected == paths)
-        #expect(after.status == .v1)
+        #expect(after.status == .v2)
         #expect(after.writable)
         #expect(after.revision != read.revision)
 
@@ -479,7 +479,7 @@ func tornWriteOperations(garbage: [UInt8]) -> ConfigurationFileOperations {
         // hold what the client sent.
         let reloaded = ConfigurationStore(directory: directory).load()
         #expect(reloaded.selected == paths, "\(label) did not survive a reload")
-        #expect(reloaded.status == .v1)
+        #expect(reloaded.status == .v2)
         #expect(reloaded.writable)
         #expect(leftoverTemporaries(directory).isEmpty)
     }
@@ -545,7 +545,7 @@ func tornWriteOperations(garbage: [UInt8]) -> ConfigurationFileOperations {
         controls[0] = DeckControl(id: controls[0].id, action: .appLaunch,
                                   parameters: .appPath("/Applications/App1.app"),
                                   presentation: ControlPresentation(title: "Browser"))
-        let seeded = try seedConfiguration(directory, DeckConfigurationV1(controls: controls))
+        let seeded = try seedConfiguration(directory, DeckConfigurationV2(controls: controls))
         let store = ConfigurationStore(directory: directory)
         let read = store.load()
         #expect(read.status == .unrepresentable)
@@ -792,14 +792,14 @@ func tornWriteOperations(garbage: [UInt8]) -> ConfigurationFileOperations {
         // Post-commit failure with a successful recovery: reported as a failed write, and the state
         // served afterwards is the restored base generation.
         #expect(failure.rejection == .writeFailed)
-        #expect(failure.stateAfterFailure?.status == .v1)
+        #expect(failure.stateAfterFailure?.status == .v2)
         #expect(failure.stateAfterFailure?.writable == true)
         #expect(readBytes(at: storePath(directory, ConfigurationStore.configurationName)) == base)
         #expect(readBytes(at: storePath(directory, ConfigurationStore.backupName)) == base)
         #expect(leftoverTemporaries(directory).isEmpty)
 
         let after = store.load()
-        #expect(after.status == .v1)
+        #expect(after.status == .v2)
         #expect(after.revision == revision)
         #expect(after.selected == ["/Applications/App1.app", "/Applications/App2.app"])
     }
@@ -826,7 +826,7 @@ func tornWriteOperations(garbage: [UInt8]) -> ConfigurationFileOperations {
             return
         }
         #expect(failure.rejection == .writeFailed)
-        #expect(failure.stateAfterFailure?.status == .v1)
+        #expect(failure.stateAfterFailure?.status == .v2)
         #expect(readBytes(at: storePath(directory, ConfigurationStore.configurationName)) == base)
         #expect(store.load().revision == revision)
     }

@@ -68,13 +68,13 @@ func appControl(index: Int, path: String) throws -> DeckControl {
 }
 
 /// A document of `count` positional app-launch controls, i.e. exactly what a migration produces.
-func appDocument(count: Int, prefix: String = "/Applications/App") throws -> DeckConfigurationV1 {
-    guard count > 0 else { return DeckConfigurationV1(controls: []) }
+func appDocument(count: Int, prefix: String = "/Applications/App") throws -> DeckConfigurationV2 {
+    guard count > 0 else { return DeckConfigurationV2(controls: []) }
     var controls: [DeckControl] = []
     for index in 1...count {
         controls.append(try appControl(index: index, path: "\(prefix)\(index).app"))
     }
-    return DeckConfigurationV1(controls: controls)
+    return DeckConfigurationV2(controls: controls)
 }
 
 /// Thrown when a test's own fixture is impossible, so a broken fixture fails loudly instead of
@@ -83,7 +83,7 @@ struct FixtureError: Error {
     let message: String
 }
 
-func encodedDocument(_ configuration: DeckConfigurationV1) throws -> Data {
+func encodedDocument(_ configuration: DeckConfigurationV2) throws -> Data {
     guard case .success(let data) = ConfigurationEncoder.verifiedData(configuration) else {
         throw FixtureError(message: "the encoder rejected a test fixture")
     }
@@ -92,8 +92,8 @@ func encodedDocument(_ configuration: DeckConfigurationV1) throws -> Data {
 
 /// The document a migration of `paths` produces, for assertions that need the value rather than the
 /// bytes.
-func appDocumentFrom(paths: [String]) throws -> DeckConfigurationV1 {
-    guard case .success(let document) = ConfigurationMigrator.migrateToV1(paths) else {
+func appDocumentFrom(paths: [String]) throws -> DeckConfigurationV2 {
+    guard case .success(let document) = ConfigurationMigrator.migrateToV2(paths) else {
         throw FixtureError(message: "the fixture selection did not migrate")
     }
     return document
@@ -102,7 +102,7 @@ func appDocumentFrom(paths: [String]) throws -> DeckConfigurationV1 {
 /// Seeds `config.json` with a valid V1 document and returns the store's own canonical bytes, so a
 /// test can assert byte-equality after a refusal.
 @discardableResult
-func seedConfiguration(_ directory: URL, _ configuration: DeckConfigurationV1) throws -> [UInt8] {
+func seedConfiguration(_ directory: URL, _ configuration: DeckConfigurationV2) throws -> [UInt8] {
     let data = try encodedDocument(configuration)
     try data.write(to: URL(fileURLWithPath: storePath(directory, ConfigurationStore.configurationName)))
     return [UInt8](data)
@@ -175,7 +175,7 @@ final class StepRecorder {
         let read = store.load()
         #expect(read.state == .ready(document))
         #expect(read.selected == paths)
-        #expect(read.status == .v1)
+        #expect(read.status == .v2)
         #expect(read.writable)
         #expect(read.revision != nil)
     }
@@ -186,7 +186,7 @@ final class StepRecorder {
         try seedConfiguration(directory, try appDocument(count: 7))
 
         let read = ConfigurationStore(directory: directory).load()
-        #expect(read.status == .v1)
+        #expect(read.status == .v2)
         #expect(read.writable)
         #expect(read.selected?.count == 7)
     }
@@ -237,29 +237,29 @@ final class StepRecorder {
         let directory = try temporaryStoreDirectory()
         defer { removeStoreDirectory(directory) }
 
-        let document: DeckConfigurationV1
+        let document: DeckConfigurationV2
         switch kind {
         case "titled":
             var controls = try appDocument(count: 2).controls
             controls[0] = DeckControl(id: controls[0].id, action: .appLaunch,
                                       parameters: .appPath("/Applications/Safari.app"),
                                       presentation: ControlPresentation(title: "Browser"))
-            document = DeckConfigurationV1(controls: controls)
+            document = DeckConfigurationV2(controls: controls)
         case "custom-id":
             let id = try #require(ControlID(rawValue: "build"))
-            document = DeckConfigurationV1(controls: [
+            document = DeckConfigurationV2(controls: [
                 DeckControl(id: id, action: .appLaunch, parameters: .appPath("/Applications/Xcode.app"),
                             presentation: ControlPresentation(title: nil)),
             ])
         case "gapped":
-            document = DeckConfigurationV1(controls: [
+            document = DeckConfigurationV2(controls: [
                 try appControl(index: 1, path: "/Applications/Safari.app"),
                 try appControl(index: 3, path: "/Applications/Music.app"),
             ])
         default:
             let action = try #require(ActionID(rawValue: "shortcuts.run"))
             let id = try #require(ControlID(rawValue: "app-1"))
-            document = DeckConfigurationV1(controls: [
+            document = DeckConfigurationV2(controls: [
                 DeckControl(id: id, action: action, parameters: .unmodeled(["name": "Build"]),
                             presentation: ControlPresentation(title: nil)),
             ])
@@ -295,13 +295,13 @@ final class StepRecorder {
     @Test func aNewerVersionIsUnsupportedNotCorrupt() throws {
         let directory = try temporaryStoreDirectory()
         defer { removeStoreDirectory(directory) }
-        try writeText("{\"version\":2,\"controls\":[]}",
+        try writeText("{\"version\":3,\"controls\":[]}",
                       to: storePath(directory, ConfigurationStore.configurationName))
 
         let read = ConfigurationStore(directory: directory).load()
-        #expect(read.state == .damaged(.config, .unsupportedVersion(found: 2)))
+        #expect(read.state == .damaged(.config, .unsupportedVersion(found: 3)))
         #expect(read.status == .unsupportedVersion)
-        #expect(read.version == 2)
+        #expect(read.version == 3)
         #expect(!read.writable)
     }
 
@@ -476,7 +476,7 @@ final class StepRecorder {
         try seedLegacy(directory, [])
 
         let classification = ConfigurationStore(directory: directory).classify()
-        #expect(classification.state == .migrationPending(DeckConfigurationV1(controls: []), []))
+        #expect(classification.state == .migrationPending(DeckConfigurationV2(controls: []), []))
         let read = ConfigurationStore(directory: directory).load()
         // A deliberately empty deck round-trips and is not the same as an unconfigured one.
         #expect(read.selected == [])
@@ -490,7 +490,7 @@ final class StepRecorder {
         try seedLegacy(directory, ["/Applications/Completely.app", "/Applications/Different.app"])
 
         let read = ConfigurationStore(directory: directory).load()
-        #expect(read.status == .v1)
+        #expect(read.status == .v2)
         #expect(read.selected == ["/Applications/App1.app", "/Applications/App2.app"])
     }
 

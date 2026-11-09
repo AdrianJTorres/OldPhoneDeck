@@ -31,7 +31,7 @@ import Testing
         #expect(after.revision != nil)
         #expect(after.revision != before.revision)
         // The save response carries the new token, so a second edit needs no intervening read.
-        #expect(after.status == .v1)
+        #expect(after.status == .v2)
         #expect(after.writable)
     }
 
@@ -126,13 +126,13 @@ import Testing
         let canonical = store.load()
 
         // The same document, compact: different bytes on disk, identical content.
-        let compact = "{\"version\":1,\"controls\":["
+        let compact = "{\"version\":2,\"widgets\":{\"internet\":true,\"batteries\":true},\"controls\":["
             + "{\"id\":\"app-1\",\"action\":\"app.launch\",\"parameters\":{\"path\":\"/Applications/App1.app\"}},"
             + "{\"id\":\"app-2\",\"action\":\"app.launch\",\"parameters\":{\"path\":\"/Applications/App2.app\"}}]}"
         try writeText(compact, to: storePath(directory, ConfigurationStore.configurationName))
         let reformatted = store.load()
 
-        #expect(reformatted.status == .v1)
+        #expect(reformatted.status == .v2)
         #expect(reformatted.revision == canonical.revision)
         #expect(reformatted.selected == canonical.selected)
     }
@@ -159,7 +159,7 @@ import Testing
     /// the same revision. Without the tag, a repaired `launcher.json` and a damaged `config.json`
     /// holding identical bytes would be indistinguishable to a client.
     @Test func identicalDamagedBytesInDifferentFilesProduceDifferentRevisions() throws {
-        let damaged = "{\"version\":1,\"controls\":[],}"
+        let damaged = "{\"version\":2,\"widgets\":{\"internet\":true,\"batteries\":true},\"controls\":[],}"
         let configDirectory = try temporaryStoreDirectory()
         defer { removeStoreDirectory(configDirectory) }
         let legacyDirectory = try temporaryStoreDirectory()
@@ -303,7 +303,7 @@ import Testing
 
         // Whatever survived is a complete, decodable document — never a prefix of one.
         let finalBytes = try #require(readBytes(at: storePath(directory, ConfigurationStore.configurationName)))
-        guard case .v1(let document) = ConfigurationDecoder.decode(.data(Data(finalBytes))) else {
+        guard case .v2(let document) = ConfigurationDecoder.decode(.data(Data(finalBytes))) else {
             Issue.record("the committed document does not decode")
             return
         }
