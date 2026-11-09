@@ -1,6 +1,7 @@
 # ARCHITECTURE.md — PhoneDeck
 
-Architecture reference including M3.2.1 on `m3.2/widgets-v2` (implementation pending acceptance).
+Architecture reference including M3.2.1 on `m3.2/widgets-v2` (physical iPhone 11 acceptance PASS;
+GitHub consolidation pending Steering acceptance).
 The upstream baseline is `e622184`. M2.1–M2.4 and M2.5 S1–S7 are accepted by Steering;
 **M2.5 is COMPLETE (2026-11-08)**. The V1/V2 codec (ADR-015/017), active `ConfigurationStore` and
 revision-aware ES5 client (ADR-016/017) are wired end to end on this branch. Production remains
@@ -511,7 +512,10 @@ One file: inline CSS, markup and one ES5 IIFE. No framework or build step.
   vertical space is limited. Media buttons expose labels, focus and Enter/Space activation.
   These changes are implemented on `m3.1/media-ui`; Steering reported physical iPhone 11 PASS
   on 2026-11-08 for Spotify controls, layouts, regression and Home Screen launch. Apple Music
-  was not physically tested. M3.1 is accepted and merged at `14872a3a`; M3.2.1 physical acceptance remains pending.
+  was not physically tested. M3.1 is accepted and merged at `14872a3a`; M3.2.1 physical iPhone 11 acceptance
+  PASS was confirmed by Steering on 2026-11-09: six apps preserved, Save/Cancel, all four widget
+  combinations, reload persistence, restoration of both widgets, Spotify/Claude/Phone regression,
+  portrait/landscape and Home Screen. GitHub consolidation remains pending Steering acceptance.
 - **State:** module-scope variables only, plus `localStorage` for `token` and `view`
   (wrapped in try/catch for private mode). App selection and widget visibility live on the Mac, because
   Safari and the Home Screen app have separate storage.
@@ -579,7 +583,7 @@ Production cutover is complete; the remaining capabilities below are planned.
 | Seam | Milestone | Shape |
 |---|---|---|
 | **Action boundary** | M2 (foundational) — `app.launch` implemented and accepted in M2.3 | An internal representation of an approved action — identifier, display metadata, validated parameters, server-side execution allowlist. `ActionRegistry` now carries this for app launch only; Shortcuts, developer and Git actions become implementations of it in later slices. No arbitrary shell execution. |
-| **Versioned configuration** | M2.4 codec and M2.5 S1–S7 complete and accepted | V2 is implemented on this branch through `ConfigurationStore` and the shared launcher handler (ADR-017), pending acceptance; production remains M3.1/V1. Source-aware migration preserves frozen legacy bytes; canonical revisions, locking, atomic replacement, backup and verified recovery protect edits. The ES5 client consumes state and refreshed revisions but remains a seven-slot path-list editor. Decoding or storing a path confers no execution authority. See §7 and §10; S7 production cutover is accepted. |
+| **Versioned configuration** | M2.4 codec and M2.5 S1–S7 complete and accepted | V2 is implemented on this branch through `ConfigurationStore` and the shared launcher handler (ADR-017), physical iPhone 11 acceptance PASS (2026-11-09), GitHub consolidation pending Steering acceptance; production remains M3.1/V1. Source-aware migration preserves frozen legacy bytes; canonical revisions, locking, atomic replacement, backup and verified recovery protect edits. The ES5 client consumes state and refreshed revisions but remains a seven-slot path-list editor. Decoding or storing a path confers no execution authority. See §7 and §10; S7 production cutover is accepted. |
 | **Ingress / auth hardening** | M2.1 admission and M2.2 resource bounds implemented; remaining M2 → M5 | Bounded headers/body, early query-token auth, receive/auth deadlines, connection/media caps and bounded frame/audio buffering. M2.2 passed independent review and Steering acceptance. Action authorization exists for app launch (M2.3, accepted); the remaining routes and the unscoped token belong to M5's independent T3 assessment and hardening. |
 | **Collector boundary** | Just-in-time with M4 telemetry | Registry of collectors (each with its own queue) composed into one snapshot, so Git/agent status does not edit the route table. |
 | **Frontend data model** | M3 | Data-driven controls and widgets, layout described rather than hand-computed — while staying one ES5 file with no framework. |

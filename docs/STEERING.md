@@ -154,7 +154,7 @@ and demonstrable.
 | M0 — Baseline verification | **COMPLETE** — fork created, clone configured, baseline `e622184` builds and runs, verified on the iPhone 11 |
 | M1 — Understand & document | **COMPLETE** — M1.1 repository analysis and M1.2 project documentation both reviewed and accepted by Steering |
 | M2 — Foundations | **IN PROGRESS** — M2.1–M2.4 accepted by Steering; ADR-015 and ADR-016 remain ratified. **M2.5 COMPLETE (2026-11-08)**: S1–S7 accepted; production migration/cutover, rollback rehearsal, production authentication rotation and physical iPhone 11 acceptance PASS. New authenticated device access works and the previous token is rejected. Phase A is complete; Phase B GitHub consolidation is submitted for Steering acceptance without merge or branch deletion. |
-| M3 — PhoneDeck UI | Not started |
+| M3 — PhoneDeck UI | **IN PROGRESS** — M3.1 production accepted at `14872a3a`; M3.2.1 physical iPhone 11 acceptance PASS confirmed on 2026-11-09, independent review PASS and 405 automated tests PASS. GitHub consolidation pending Steering acceptance; no merge or production V2 cutover authorized. |
 | M4 — Developer Deck | Not started |
 | M5 — Security & reliability | Not started |
 | M6 — PhoneDeck V1 | Not started |
