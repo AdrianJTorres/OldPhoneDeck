@@ -134,6 +134,19 @@ struct ConfigurationRead: Equatable {
     let writable: Bool
     let revision: String?
 
+    var document: DeckConfigurationV2? {
+        switch state {
+        case .ready(let value), .overLimit(let value), .unprojectable(let value),
+             .migrationPending(let value, _): return value
+        default: return nil
+        }
+    }
+
+    var controlsWritable: Bool {
+        writable || (document != nil && document!.controls.count <= ConfigurationStorePolicy.maximumAppControls
+                     && status == .unrepresentable)
+    }
+
     var widgets: WidgetPreferences? {
         switch state {
         case .ready(let document), .overLimit(let document), .unprojectable(let document),
@@ -474,6 +487,7 @@ enum ConfigurationWriteRejection: Equatable {
     case tooManyKeys
     /// An entry longer than a dispatchable path.
     case entryTooLong
+    case invalidControls
     /// The document could not be built or self-verified before anything was touched.
     case writeFailed
     case busy
@@ -814,7 +828,14 @@ struct ConfigurationStore {
     /// `paths` is already parsed: turning `n=` and `paths=` into this array is the route's job
     /// (S1b), which keeps this slice free of wire concerns. `expectedRevision` is the token the
     /// client was given, and nil or empty means it had none.
-    func write(paths: [String]?, expectedRevision: String?, widgets: WidgetPreferences? = nil) -> ConfigurationWriteOutcome {
+    func write(paths: [String]?, expectedRevision: String?, widgets: WidgetPreferences? = nil,
+               controls: [DeckControl]? = nil) -> ConfigurationWriteOutcome {
+        if let controls {
+            guard paths == nil, controls.count <= ConfigurationStorePolicy.maximumAppControls,
+                  case .success = ConfigurationEncoder.verifiedData(DeckConfigurationV2(controls: controls)) else {
+                return .rejected(ConfigurationWriteFailure(rejection: .invalidControls, stateAfterFailure: nil))
+            }
+        }
         // P1 — product bounds, before any I/O.
         guard (paths?.count ?? 0) <= ConfigurationStorePolicy.maximumAppControls else {
             return .rejected(ConfigurationWriteFailure(rejection: .tooManyKeys, stateAfterFailure: nil))
@@ -831,7 +852,8 @@ struct ConfigurationStore {
 
         // P4 — re-classify under the lock, and capture the base generation while it is still there.
         let classification = classify()
-        guard Self.isWritable(classification.state) else {
+        guard Self.isWritable(classification.state) ||
+                (controls != nil && Self.read(from: classification).controlsWritable) else {
             return .rejected(ConfigurationWriteFailure(rejection: .state(Self.status(for: classification.state)),
                                                        stateAfterFailure: nil))
         }
@@ -846,7 +868,7 @@ struct ConfigurationStore {
         // Capture the exact V1/V2 base for verified recovery; never restore an older generation.
         var current: DeckConfigurationV2?
         switch classification.state {
-        case .ready(let value), .migrationPending(let value, _): current = value
+        case .ready(let value), .unprojectable(let value), .migrationPending(let value, _): current = value
         default: break
         }
         let baseValue: ConfigurationState? = classification.v1Source.map { .v1($0) }
@@ -858,7 +880,9 @@ struct ConfigurationStore {
         guard case .success(var document) = ConfigurationMigrator.migrateToV2(paths ?? []) else {
             return .rejected(ConfigurationWriteFailure(rejection: .writeFailed, stateAfterFailure: nil))
         }
-        if let current, paths == nil || ConfigurationMigrator.legacySelection(current.v1) == paths {
+        if let controls {
+            document.controls = controls
+        } else if let current, paths == nil || ConfigurationMigrator.legacySelection(current.v1) == paths {
             document.controls = current.controls
         }
         document.widgets = widgets ?? current?.widgets ?? .visible

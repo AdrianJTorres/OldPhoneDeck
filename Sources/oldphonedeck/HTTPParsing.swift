@@ -207,6 +207,7 @@ struct HTTPRequestParser {
 enum DeckRoute: CaseIterable {
     case page, index, profile, info, stats, speedtest, media, artwork
     case launcherRead, launcherSave, icon, launch, claude, cameraStream, cameraFrame
+    case shortcutRun, shortcutStatus
 
     var path: String {
         switch self {
@@ -221,6 +222,7 @@ enum DeckRoute: CaseIterable {
         case .launcherRead, .launcherSave: return "/launcher"
         case .icon: return "/icon"
         case .launch: return "/launch"
+        case .shortcutRun, .shortcutStatus: return "/shortcut"
         case .claude: return "/claude"
         case .cameraStream: return "/camera.mjpg"
         case .cameraFrame: return "/camera.jpg"
@@ -229,14 +231,14 @@ enum DeckRoute: CaseIterable {
 
     var method: String {
         switch self {
-        case .speedtest, .media, .launcherSave, .launch, .claude: return "POST"
+        case .speedtest, .media, .launcherSave, .launch, .claude, .shortcutRun: return "POST"
         default: return "GET"
         }
     }
 
     var bodyLimit: Int {
         switch self {
-        case .media: return 1024
+        case .media, .shortcutRun: return 1024
         case .launch: return 16 * 1024
         case .claude, .launcherSave: return 64 * 1024
         default: return 0
@@ -266,6 +268,10 @@ enum DeckRoute: CaseIterable {
         if request.method == "POST", request.path == "/launcher" {
             // Revision and state checks stay under the store's lock, in refusal order.
             if case .failure(let failure) = LauncherRoute.parseWidgets(p) { return failure }
+            if p["controls"] != nil {
+                if case .failure(let failure) = LauncherRoute.parseControls(p) { return failure }
+                return nil
+            }
             return LauncherRoute.parseSelection(p).failure
         }
         if request.path == "/launch", (p["path"] ?? "").utf8.count > 4096 {

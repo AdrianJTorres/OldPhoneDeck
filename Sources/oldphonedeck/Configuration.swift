@@ -631,7 +631,7 @@ enum ConfigurationCanonicalForm {
          "controls": configuration.controls.map { controlObject($0) }]
     }
 
-    private static func controlObject(_ control: DeckControl) -> [String: Any] {
+    static func controlObject(_ control: DeckControl) -> [String: Any] {
         var object: [String: Any] = [
             "id": control.id.rawValue,
             "action": control.action.rawValue,

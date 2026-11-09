@@ -324,7 +324,7 @@ struct LauncherRouteStoreWiringTests {
         // Exercise the actual editor selection handler, not just a manufactured draft.
         try client.run("openEditor(); $('editList').children[1].listeners.click(); $('editSave').tap()")
         let body = try #require(try client.run("requests[0].body").toString())
-        #expect(HTTPRequest.parseForm(body)["n"] == "2")
+        #expect(try LauncherRoute.parseControls(HTTPRequest.parseForm(body)).get().count == 2)
         #expect(HTTPRequest.parseForm(body)["expected"]?.isEmpty == false)
         let saved = try post(port: port, target: client.run("requests[0].path").toString(), body: body)
         #expect(saved.hasPrefix("HTTP/1.1 200 OK\r\n"))
@@ -335,7 +335,7 @@ struct LauncherRouteStoreWiringTests {
 
         // Preserve form delimiters, Unicode, empty entries and duplicates end to end.
         let paths = ["/Applications/A+B & 你好.app", "", "/Applications/A+B & 你好.app"]
-        let encoded = String(decoding: try JSONSerialization.data(withJSONObject: paths), as: UTF8.self)
+        let encoded = String(decoding: try JSONSerialization.data(withJSONObject: paths.enumerated().map { ["id": "app-\($0.offset + 1)", "action": "app.launch", "parameters": ["path": $0.element]] }), as: UTF8.self)
         try client.run("openEditor(); draft = \(encoded); $('editSave').tap()")
         let secondBody = try #require(try client.run("requests[0].body").toString())
         #expect(HTTPRequest.parseForm(secondBody)["expected"] == revision)
@@ -363,13 +363,13 @@ struct LauncherRouteStoreWiringTests {
             return
         }
         let original = readBytes(at: store.configurationPath)
-        try client.run("openEditor(); draft = ['/Draft.app']; $('editSave').tap()")
+        try client.run("openEditor(); draft = [{id:'app-1',action:'app.launch',parameters:{path:'/Draft.app'}}]; $('editSave').tap()")
         let body = try #require(try client.run("requests[0].body").toString())
         let response = try post(port: port, body: body)
         #expect(response.hasPrefix("HTTP/1.1 409 Conflict\r\n"))
         try deliver(response, to: client)
         #expect(try client.run("cfg.revision").toString() == originalRevision)
-        #expect(try client.run("draft[0]").toString() == "/Draft.app")
+        #expect(try client.run("draft[0].parameters.path").toString() == "/Draft.app")
         #expect(try client.run("notices[notices.length - 1]").toString().contains("reload"))
         #expect(readBytes(at: store.configurationPath) == original)
     }

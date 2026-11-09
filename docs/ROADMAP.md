@@ -530,3 +530,31 @@ Reserved, not scheduled, not a dependency of V1.
 - Always-on information/dashboard role on the larger screen.
 - Read-only telemetry focus rather than interactive control.
 - Must not complicate the iPhone 11 primary path.
+
+## M3.3 — macOS Shortcuts
+
+**STATUS: IMPLEMENTED, VALIDATION AND STEERING ACCEPTANCE PENDING (2026-11-09).**
+Approved base `96c637f84bfaf5872173b440178459906c7eda43`, branch `m3.3/shortcuts`,
+Codex WRITE_OWNER. ADR-018 records the server-owned UUID allowlist and execution policy.
+The existing seven-key ES5 editor supports mixed apps and explicitly approved Shortcuts,
+complete-control V2 saves, stable IDs/order/metadata, visible unavailable/inert entries,
+Save/Cancel and shared widget/revision/atomic recovery semantics. Legacy app-only writes
+refuse mixed documents. Default approvals are empty; only the harmless Steering-approved
+UUID test may be configured in the isolated preview's private file outside Git.
+
+Authenticated asynchronous runs have one slot, no execution queue or retries, fresh UUID
+availability checks, closed stdin, bounded output, a 30-second execution deadline and
+process cleanup. Feedback distinguishes Running, CLI completion, failure, timeout with
+unknown effects, busy, unauthorized and unavailable. Terminal UUID proof is recorded in
+ADR-018 and does not establish unattended PhoneDeck execution. No real Shortcut execution,
+production changes, token/TLS rotation, merge or deployment is authorized. One independent
+T3 review, isolated HTTPS preview and test/build receipts are required before handoff.
+Real server-triggered/physical iPhone 11 execution and Steering acceptance remain PENDING.
+
+Implementation validation: **422 tests in 48 suites PASS**, using fake Shortcut executors.
+The complete shipped inline script parses as ES5 with Node-bundled Acorn 8.18.0.
+Tests cover approved/denied UUIDs, current/missing catalogue membership, one winner under
+concurrent starts, busy/failure/timeout/no retry, bounded fake-process cleanup, private approval
+file refusal, full mixed metadata/order/widget preservation, stale/concurrent saves, verified
+failed-write recovery, seven retained application controls and client behavior. HTTP tests use
+production admission/handlers with fake executors; no real Shortcut was executed.

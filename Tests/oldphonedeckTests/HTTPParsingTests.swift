@@ -204,7 +204,7 @@ final class HTTPParsingTests {
     }
 
     @Test func testEveryDeclaredRouteHasExpectedBodyLimit() throws {
-        let expected: [String: Int] = ["/media": 1024, "/launch": 16384, "/claude": 65536, "/launcher": 65536]
+        let expected: [String: Int] = ["/shortcut": 1024, "/media": 1024, "/launch": 16384, "/claude": 65536, "/launcher": 65536]
         for route in DeckRoute.allCases {
             let head = HTTPRequestHead(method: route.method, path: route.path, query: ["k": token], headers: [:], contentLength: 0)
             let limit = route.method == "POST" ? expected[route.path] ?? 0 : 0

@@ -590,3 +590,30 @@ Production cutover is complete; the remaining capabilities below are planned.
 
 Deliberately **not** planned: a web framework, a database, keep-alive/HTTP2 work, a
 rewrite of the transport layer, or a client app.
+
+### M3.3 — Approved UUID Shortcuts (2026-11-09)
+
+ADR-018 adds `Shortcuts.swift`: private operator-owned approvals, a strictly typed UUID,
+current catalogue verification, one shared execution slot and asynchronous Foundation
+Process lifetime management. `ActionRegistry` resolves `shortcut.run` and delegates its
+server-owned authorization/execution policy to the shared `ShortcutService`. The only
+executable is `/usr/bin/shortcuts`, with fixed `list --show-identifiers` or `run UUID`
+arguments. There is no shell or HTTP approval/registration API. Empty approvals are default.
+
+Authenticated POST/GET `/shortcut` reuse `DeckRoute` admission and shared HTTP/HTTPS resource
+limits. POST body cap: 1 KiB; GET: zero. POST returns a run ID immediately. GET reports
+only the latest run. Availability lookup is bounded to five seconds; run deadline is 30
+seconds. Nonblocking drainage retains at most 64 KiB stdout and discards stderr. Timeout
+publishes an unknown side-effect outcome, terminates the CLI and escalates after 500 ms;
+the slot closes only after process exit/descriptor cleanup. Apple's external engine is
+outside that process lifetime guarantee. CLI exit 0 is completion evidence only.
+
+`/launcher` adds full ordered controls, `controlsWritable` and approved-only Shortcut metadata.
+Complete-control POSTs reuse V2 strict decoding, locking, revision, commit verification and
+recovery; they preserve IDs, order, titles, unknown parameters and widgets. Legacy app-path
+POSTs refuse mixed/metadata documents. `selected` and `writable` retain legacy meanings.
+The ES5 editor uses complete controls and preserves unavailable entries in their positions.
+Seven app selections remain untouched until an explicit Save replaces them. No configuration
+load, save, approval load, build or test executes a real Shortcut. Operator/consent details:
+`M3.3-SHORTCUTS.md`. Physical iPhone 11/server-context execution and Steering acceptance are
+PENDING; production remains untouched.
