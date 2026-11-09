@@ -602,10 +602,46 @@ one POST. All action requests were intercepted before the server and configurati
 The code and existing fake-executor tests also verify server-side concurrent-run rejection,
 timeout-unknown never becoming success, and the CLI exit-0 completion gate.
 
-GitHub consolidation changes acceptance status only in ROADMAP/STEERING; accepted functionality,
-ADR-018 and the reviewed implementation remain unchanged. Existing build, 422-test baseline,
-33 focused-test and independent-review receipts are reused without broad repetition. Only
-`m3.3/shortcuts` is authorized for publication to the user's fork, targeting `main` for Steering's
-integration decision. **Production deployment remains PENDING**: no production restart, real
-configuration/credential/TLS change, merge or new Shortcut execution is authorized. The original
-checkout and existing production service remain untouched. Stop for Steering after PR verification.
+**Current integration status (2026-11-09): M3.3 COMPLETE.** Steering confirms the slice is
+merged to `main` at `c3fdff8906f88decfd8fdde4335d8bad17df953f`, deployed and physically
+accepted on iPhone 11. The implementation and review evidence above is retained; this
+status update records Steering's production acceptance rather than a new device test.
+
+## M3.4 — Minimal Data-Driven UI Closure
+
+**STATUS: COMPLETE — implementation and physical iPhone 11 acceptance PASS**, confirmed by
+Steering on 2026-11-09. GitHub integration: [PR #10](https://github.com/AdrianJTorres/OldPhoneDeck/pull/10).
+Base: `c3fdff8906f88decfd8fdde4335d8bad17df953f`.
+
+Remaining ADR-010 gap: controls already render from complete configuration in saved order;
+widget descriptors drove visibility, but each responsive branch explicitly positioned Internet
+and Batteries. M3.4 reuses `WIDGET_CARDS` for one row/column placement helper. Each branch
+supplies a status region; adding a card template/descriptor no longer needs per-card layout
+math in three branches. A descriptor retains Internet's legacy height; battery content sizing,
+seven editable keys, control IDs/order, editor, hidden slots and media/Phone geometry remain.
+Fixed screen regions, templates, collectors and the two persisted visibility fields are deliberate
+integration points, not an arbitrary dashboard API. No framework or persistence/auth change.
+
+Validation: 14 focused Swift Testing tests pass (launcher client, mixed-control client and two
+new widget-layout tests). The extension test inserts a third descriptor into the existing row
+and column without changing `layout()`. The complete shipped script parses as ES5 with Acorn
+in ES5 mode. Headless Chrome compares exact geometry/key labels against the pinned base across
+five viewport/safe-area cases and all four widget combinations (20 comparisons); media targets
+remain at least 44 CSS px. Editor reorder/Save/reload preserves IDs and complete metadata;
+Cancel is byte-exact. The final release build succeeds with zero warnings. An initial sandboxed
+build failed on inaccessible compiler caches; the unrestricted local build and final checks pass.
+
+Focused independent read-only review: **PASS**, no blockers, majors or minors. No broad test
+rerun, real app/Shortcut execution, production modification, merge or deployment occurred.
+Isolated HTTPS preview uses ports 8085/8087/8088, fresh private configuration/token/TLS and no
+approved Shortcuts, with production configuration denied by its sandbox. Its original seven
+synthetic controls and both widgets are restored. Browser checks do not establish physical
+acceptance by themselves. Steering subsequently confirmed implementation and physical iPhone 11
+acceptance **PASS** for `46133b6b0b36daf9ce9898297d11523034e06c60` and authorized publication,
+PR creation, merge and GitHub verification. The accepted product/test blobs remain unchanged;
+the follow-up records status only. PR #10 integrates that implementation into `main` using the
+established merge-commit method; this integration record takes effect with that merge.
+Existing tests/build/browser/independent-review evidence is reused without repetition.
+**Production is unchanged. M3.4 production deployment is not authorized or claimed.**
+Overall M3 production closure and any next milestone remain for Steering; no M4 work begins.
+**Stop for Steering after GitHub integration verification.**

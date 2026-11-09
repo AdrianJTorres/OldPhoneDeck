@@ -352,7 +352,7 @@
   }
   function layout(scale) {
     // Keep Internet and Batteries visible beside or below the media and keys.
-    var net = $('net'), bat = $('bat'), cardW, netH = 104, batH;
+    var net = $('net'), bat = $('bat'), cardW, netH = 104, batH, status;
     net.className = bat.className = 'card';
     $('hint').style.display = 'none';
     var featured = portrait || W >= 640;
@@ -374,10 +374,8 @@
       $('seg').style.top = '50px';
       px($('music'), { left: 16, top: top, width: W - 32 });
       px($('keys'), { left: (W - 316) / 2, top: keysTop });
-      cardW = (W - 42) / 2; batH = netH;
       var cardTop = keysTop + 208 + 12;
-      px(net, { left: 16, top: cardTop, width: cardW, height: netH });
-      px(bat, { left: 16 + cardW + 10, top: cardTop, width: cardW });
+      status = { left: 16, top: cardTop, width: W - 32, height: netH };
       var pvH = Math.round((W - 32) * 3 / 4);
       px($('pvBox'), { left: 16, top: 72, width: W - 32, height: pvH });
       px($('pCtl'), { left: 16, top: 72 + pvH + 14, width: W - 32 });
@@ -388,25 +386,23 @@
         var mediaLeft = 16 + 316 + 20, mediaW = W - mediaLeft - 16;
         px($('keys'), { left: 16, top: 76 });
         px($('music'), { left: mediaLeft, top: 52, width: mediaW });
-        cardW = (mediaW - 10) / 2;
         var statusTop = 52 + 100 + target + 12;
-        netH = batH = H - statusTop - 16;
-        px(net, { left: mediaLeft, top: statusTop, width: cardW, height: netH });
-        px(bat, { left: mediaLeft + cardW + 10, top: statusTop, width: cardW });
+        netH = H - statusTop - 16;
+        status = { left: mediaLeft, top: statusTop, width: mediaW, height: netH };
       } else {
         // iOS 8/9 landscape fallback, without modern layout features.
         cardW = 128;
         var colLeft = W - 16 - cardW, keysArea = colLeft - 32;
         px($('keys'), { left: 16 + Math.max(0, (keysArea - 316) / 2), top: 46 });
         px($('music'), { left: 16, top: H - target - 24, width: Math.max(316, keysArea) });
-        batH = 304 - (52 + netH + 10);
-        px(net, { left: colLeft, top: 52, width: cardW, height: netH });
-        px(bat, { left: colLeft, top: 52 + netH + 10, width: cardW });
+        status = { left: colLeft, top: 52, width: cardW, height: 252, vertical: true };
       }
       var ctlW = W >= 640 ? 180 : 150;
       px($('pvBox'), { left: 16, top: 42, width: W - 32 - ctlW - 12, height: 264 });
       px($('pCtl'), { left: W - 16 - ctlW, top: 42, width: ctlW });
     }
+    var frames = layoutWidgetCards(status);
+    cardW = frames.net.width; netH = frames.net.height; batH = frames.bat.height;
     if (netH < 104) net.className = 'card compact';
     batteryRows = Math.max(1, Math.floor((batH - 40) / 30)) * 2;   // max chips that fit, two per row
     var spark = $('spark'), sw = cardW - 24, sh = netH < 104 ? 10 : 18;
@@ -451,7 +447,27 @@
 
   // ---------- keys ----------
   var launcher = { selected: null, all: [], widgets: null };
-  var WIDGET_CARDS = [{ preference: 'internet', id: 'net' }, { preference: 'batteries', id: 'bat' }];
+  var WIDGET_CARDS = [
+    { preference: 'internet', id: 'net', legacyHeight: 104 },
+    { preference: 'batteries', id: 'bat' }
+  ];
+  // One row on modern screens, one column on the legacy deck. Hidden cards retain
+  // their slots, matching the existing visibility behavior. Card markup/data stays local.
+  function layoutWidgetCards(region) {
+    var frames = {}, count = WIDGET_CARDS.length, gap = 10, fixed = 0, flexible = 0, offset = 0;
+    if (region.vertical) WIDGET_CARDS.forEach(function (card) {
+      if (card.legacyHeight) fixed += card.legacyHeight; else flexible++;
+    });
+    WIDGET_CARDS.forEach(function (card) {
+      var width = region.vertical ? region.width : (region.width - gap * (count - 1)) / count;
+      var height = region.vertical ? (card.legacyHeight || (region.height - gap * (count - 1) - fixed) / flexible) : region.height;
+      var frame = { left: region.left + (region.vertical ? 0 : offset),
+                    top: region.top + (region.vertical ? offset : 0), width: width, height: height };
+      px($(card.id), frame); frames[card.id] = frame;
+      offset += (region.vertical ? height : width) + gap;
+    });
+    return frames;
+  }
   function applyWidgets() {
     WIDGET_CARDS.forEach(function (card) {
       $(card.id).style.display = launcher.widgets && launcher.widgets[card.preference] === false ? 'none' : '';
