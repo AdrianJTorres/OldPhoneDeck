@@ -533,7 +533,7 @@ Reserved, not scheduled, not a dependency of V1.
 
 ## M3.3 — macOS Shortcuts
 
-**STATUS: IMPLEMENTED AND INDEPENDENTLY REVIEWED; PHYSICAL/STEERING ACCEPTANCE PENDING (2026-11-09).**
+**STATUS: FUNCTIONAL AND PHYSICAL IPHONE ACCEPTANCE PASS; GITHUB CONSOLIDATION FOR INTEGRATION; PRODUCTION DEPLOYMENT PENDING (2026-11-09).**
 Approved base `96c637f84bfaf5872173b440178459906c7eda43`, branch `m3.3/shortcuts`,
 Codex WRITE_OWNER. ADR-018 records the server-owned UUID allowlist and execution policy.
 The existing seven-key ES5 editor supports mixed apps and explicitly approved Shortcuts,
@@ -545,11 +545,10 @@ UUID test may be configured in the isolated preview's private file outside Git.
 Authenticated asynchronous runs have one slot, no execution queue or retries, fresh UUID
 availability checks, closed stdin, bounded output, a 30-second execution deadline and
 process cleanup. Feedback distinguishes Running, CLI completion, failure, timeout with
-unknown effects, busy, unauthorized and unavailable. Terminal UUID proof is recorded in
-ADR-018 and does not establish unattended PhoneDeck execution. No real Shortcut execution,
-production changes, token/TLS rotation, merge or deployment is authorized. One independent
-T3 review, isolated HTTPS preview and test/build receipts are required before handoff.
-Real server-triggered/physical iPhone 11 execution and Steering acceptance remain PENDING.
+unknown effects, busy, unauthorized and unavailable. ADR-018 records the design and initial
+Terminal proof; the physical server-context evidence below supersedes the implementation-time
+acceptance-pending notes. No further real Shortcut execution, production changes, token/TLS
+rotation, merge or deployment is authorized by this GitHub consolidation.
 
 Implementation validation: **422 tests in 48 suites PASS**, using fake Shortcut executors.
 The complete shipped inline script parses as ES5 with Node-bundled Acorn 8.18.0.
@@ -568,8 +567,8 @@ outcome, clears local polling and ignores late callbacks without resubmitting ex
 regression for both POST and GET blackholes and late success replies. Full-script ES5
 parsing still passes. Focused re-review of correction `76abb72abaaac15bc132cafa08eae64c58119632` is **PASS**;
 the one minor finding is closed with no remaining review findings. The broad 422-test
-baseline is retained. Foundation Process integration with Apple's engine and
-server-context consent remain physical/separately authorized acceptance gaps.
+baseline is retained. Existing execution/completion evidence and Steering's physical
+acceptance decision are recorded below; no broad review is repeated for consolidation.
 
 
 Final release build: **PASS with zero warnings**. Isolated HTTPS preview uses separate
@@ -579,12 +578,34 @@ read/copied or rotated. The preview process sandbox denies production configurat
 Verified HTTPS, shipped-resource identity, authentication and denied-UUID refusal pass.
 Real-browser checks pass long-press, seven-key removal-before-add, mixed Save/reload and
 ordering, byte-exact Cancel, all four widget combinations and five viewport cases including
-480×320. Effective media targets remain at least 44 CSS px. All Shortcut feedback requests
-and other Mac-action POSTs were intercepted before network; no real Shortcut was executed.
-The preview ends with its original seven complete app controls restored, both widgets visible,
-and the approved test Shortcut unselected. Final UI labels mention apps and Shortcuts.
+480×320. Effective media targets remain at least 44 CSS px. During automated browser checks,
+all Shortcut feedback requests and other Mac-action POSTs were intercepted before network; no real Shortcut was executed
+by those checks. At the implementation handoff the preview had its original seven complete
+app controls restored, both widgets visible, and the approved test Shortcut unselected.
+Final UI labels mention apps and Shortcuts.
 
-The original checkout/branch and all pre-existing server listeners remain unchanged. No push,
-merge, production change or deployment occurred. Server-context consent, actual Foundation
-Process/Apple-engine execution and physical iPhone 11 acceptance remain **PENDING** and
-require a separately authorized harmless test. Stop here for Steering acceptance.
+**Steering acceptance (2026-11-09): M3.3 functional and physical iPhone acceptance PASS**
+for implementation `873848566503e169ec98cfbd228c5e4ba98ac851`. The user ran the harmless test
+from the isolated iPhone 11 HTTPS preview on port 8077 and observed Completed with no consent
+dialog or visible Mac action; a Text-only Shortcut need not produce a visible Mac action.
+Existing macOS logs verify execution and workflow completion. The preview implementation
+requires normal CLI exit 0 for Completed; numeric exit status was not independently persisted.
+Three CLI executions were observed at 14:36:16, 14:36:36 and 14:36:56 CET. The user reports
+very likely pressing the key three times, plausibly separate user interactions. Exact HTTP
+request-to-process correlation is unavailable; no automatic-duplication defect is proven.
+Steering lifted the previous blocker and subsequently accepted functional and physical behavior.
+
+Final focused verification retained the existing test/review evidence and added only the missing
+browser touch-dispatch regression with fake responses: one touch sends one execution POST,
+a touch while Busy adds none, polling/timeout adds no retry, and a separate mouse click sends
+one POST. All action requests were intercepted before the server and configuration was unchanged.
+The code and existing fake-executor tests also verify server-side concurrent-run rejection,
+timeout-unknown never becoming success, and the CLI exit-0 completion gate.
+
+GitHub consolidation changes acceptance status only in ROADMAP/STEERING; accepted functionality,
+ADR-018 and the reviewed implementation remain unchanged. Existing build, 422-test baseline,
+33 focused-test and independent-review receipts are reused without broad repetition. Only
+`m3.3/shortcuts` is authorized for publication to the user's fork, targeting `main` for Steering's
+integration decision. **Production deployment remains PENDING**: no production restart, real
+configuration/credential/TLS change, merge or new Shortcut execution is authorized. The original
+checkout and existing production service remain untouched. Stop for Steering after PR verification.
