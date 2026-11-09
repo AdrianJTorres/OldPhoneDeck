@@ -503,8 +503,8 @@ One file: inline CSS, markup and one ES5 IIFE. No framework or build step.
   scaled by a single CSS `transform: scale()` with origin `0 0`. `fit()` computes the
   scale from the viewport minus safe-area insets (measured via a hidden `env()` probe, so
   old iOS yields zero). Landscape `H = 320`, `W = clamp(480…760)`; portrait (modern only)
-  `W = 360`, `H = max(620, …)`. `layout()` then places keys, music card and widgets with
-  hardcoded pixel arithmetic per orientation. M3.1 puts music above keys in portrait and beside
+  `W = 360`, `H = max(620, …)`. `layout()` places keys/music and describes one status
+  region per orientation; `layoutWidgetCards()` places widget descriptors in a row or column. M3.1 puts music above keys in portrait and beside
   them when landscape `W >= 640`; compact legacy landscape retains a single-row player.
   Transport targets are sized with the inverse stage scale to stay at least 44 CSS px effective.
   Featured metadata uses larger type and 52px artwork; titles/artists truncate within the card.
@@ -523,8 +523,8 @@ One file: inline CSS, markup and one ES5 IIFE. No framework or build step.
   included). `applyConfig` tracks state, writable and revision, displays fixed text in `#cfgWarn`,
   and marks Save disabled. The save handler guards read-only states and sends `n`, encoded
   newline-separated `paths`, `expected` and both visibility flags. Internet/Batteries checkboxes
-  draft changes until Save; Cancel/reopen restores saved values. A fixed ES5 descriptor list
-  changes `display` only, retaining geometry and polling. Successful POST replaces the complete response and
+  draft changes until Save; Cancel/reopen restores saved values. The ES5 `WIDGET_CARDS` list
+  drives visibility and status-card placement, retaining hidden slots and polling. Successful POST replaces the complete response and
   refreshes revision before another edit; it does not invent a selection from the local draft.
   Non-200 saves retain the draft and revision with feedback for stale/missing revision, busy,
   unreachable and failed-write states. Failed/malformed GET or malformed successful POST responses
@@ -546,9 +546,18 @@ One file: inline CSS, markup and one ES5 IIFE. No framework or build step.
   HTTPS page.
 - **Views:** `deck` (8 keys + now playing + Internet + Batteries), `phone` (camera/mic
   streaming), plus three sheets: Take note, app editor, token login.
-- **Extension reality (today):** keys are 7 app slots plus one hardcoded "Take note" key;
-  the two existing widgets have configured visibility and a fixed descriptor list; geometry stays
-  in `layout()`. Broader ADR-010 data-driven controls/layout remain planned within M3.
+- **Extension reality (M3.4 implementation, pending Steering):** `renderKeys()` consumes the
+  complete configured controls in order through `controlInfo()` (app/Shortcut/unknown), with
+  seven editable slots plus the fixed "Take note" key. `WIDGET_CARDS` drives both visibility
+  and `layoutWidgetCards()` placement: an equal-width row on modern screens, a column on
+  legacy screens. Internet retains its 104px legacy height; other column cards share the
+  remaining height. Batteries still shrinks to its content inside its allocated capacity.
+  Adding a status-card template and descriptor no longer requires per-card arithmetic in
+  each `layout()` branch. New data collectors/renderers and persisted preferences remain
+  deliberate integrations; this is not a runtime dashboard schema. The key grid, media/Phone
+  templates, screen-region geometry, and Internet/Batteries editor fields remain explicit.
+  Those fixed choices preserve this deck and do not prevent a future status-card integration.
+  ADR-010's practical control/widget rendering gap is covered; acceptance remains with Steering.
 
 ## 12. Known architectural limitations
 
@@ -568,7 +577,8 @@ These are structural, not bugs to fix in passing:
 4. M2.1 bounds HTTP parsing and moves auth before bodies; M2.2 bounds connection/media
    resources; M2.3 puts app launch behind an authorized action boundary (accepted).
    One token still has one scope, and the legacy action-shaped routes are not migrated.
-5. The frontend has no data model for controls; the layout is arithmetic.
+5. Controls use the configuration data model and status cards share descriptor-based placement
+   (M3.4, pending Steering). Screen regions, card contents and data collectors remain explicit.
 6. Parser/admission, HTTP/media lifecycle, resource accounting, media bounds, the action
    boundary, codec/store, launcher route and shipped client logic have Swift Testing coverage. Hardware playback and other
    modules lack isolated tests; there is no CI.
