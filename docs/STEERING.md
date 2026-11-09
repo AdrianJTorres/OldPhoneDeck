@@ -154,7 +154,7 @@ and demonstrable.
 | M0 — Baseline verification | **COMPLETE** — fork created, clone configured, baseline `e622184` builds and runs, verified on the iPhone 11 |
 | M1 — Understand & document | **COMPLETE** — M1.1 repository analysis and M1.2 project documentation both reviewed and accepted by Steering |
 | M2 — Foundations | **IN PROGRESS** — M2.1–M2.4 accepted by Steering; ADR-015 and ADR-016 remain ratified. **M2.5 COMPLETE (2026-11-08)**: S1–S7 accepted; production migration/cutover, rollback rehearsal, production authentication rotation and physical iPhone 11 acceptance PASS. New authenticated device access works and the previous token is rejected. Phase A is complete; Phase B GitHub consolidation is submitted for Steering acceptance without merge or branch deletion. |
-| M3 — PhoneDeck UI | **IN PROGRESS** — M3.1 production accepted at `14872a3a`; M3.2.1 physical iPhone 11 acceptance PASS confirmed on 2026-11-09, independent review PASS and 405 automated tests PASS. **M3.3 functional and physical iPhone acceptance PASS**, accepted by Steering on 2026-11-09 at `873848566503e169ec98cfbd228c5e4ba98ac851`; one independent T3 review with focused closure PASS. M3.3 is **COMPLETE**, merged to `main` at `c3fdff8906f88decfd8fdde4335d8bad17df953f`, deployed and physically accepted on iPhone 11, as confirmed by Steering on 2026-11-09. M3.4 minimal data-driven UI closure is implemented and validated, with focused independent review PASS; acceptance and overall M3 closure remain pending Steering. Merge and production changes are excluded. |
+| M3 — PhoneDeck UI | **IN PROGRESS** — M3.1 production accepted at `14872a3a`; M3.2.1 physical iPhone 11 acceptance PASS confirmed on 2026-11-09, independent review PASS and 405 automated tests PASS. **M3.3 functional and physical iPhone acceptance PASS**, accepted by Steering on 2026-11-09 at `873848566503e169ec98cfbd228c5e4ba98ac851`; one independent T3 review with focused closure PASS. M3.3 is **COMPLETE**, merged to `main` at `c3fdff8906f88decfd8fdde4335d8bad17df953f`, deployed and physically accepted on iPhone 11, as confirmed by Steering on 2026-11-09. **M3.4 COMPLETE — implementation and physical iPhone 11 acceptance PASS**, confirmed by Steering on 2026-11-09 for `46133b6b0b36daf9ce9898297d11523034e06c60`, focused independent review PASS. GitHub integration via [PR #10](https://github.com/AdrianJTorres/OldPhoneDeck/pull/10), using a merge commit; this record takes effect with that merge. Production remains unchanged; M3.4 deployment is not authorized. Overall M3 production closure remains with Steering. |
 | M4 — Developer Deck | Not started |
 | M5 — Security & reliability | Not started |
 | M6 — PhoneDeck V1 | Not started |
@@ -183,5 +183,7 @@ client/launcher tests, warning-free release build and independent review are ret
 the missing browser touch regression used new fake responses. No real execution or broad
 review/test repetition was part of consolidation. Steering subsequently confirmed M3.3 merged,
 deployed and physically accepted on iPhone 11 (2026-11-09). This status update records that
-human acceptance; it does not claim new automated or physical checks. M3.4 stops for Steering
-without merge or production changes. See ROADMAP's M3.3 entry for the evidence boundary.
+human acceptance; it does not claim new automated or physical checks. M3.4 implementation and
+physical iPhone 11 acceptance are also PASS, as confirmed by Steering. Publication and merge
+are authorized for PR #10; production deployment is excluded. Stop for Steering after GitHub
+integration verification. See ROADMAP's M3.3 entry for the evidence boundary.

@@ -609,7 +609,8 @@ status update records Steering's production acceptance rather than a new device 
 
 ## M3.4 — Minimal Data-Driven UI Closure
 
-**STATUS: IN PROGRESS — implementation validated; pending Steering acceptance** (2026-11-09).
+**STATUS: COMPLETE — implementation and physical iPhone 11 acceptance PASS**, confirmed by
+Steering on 2026-11-09. GitHub integration: [PR #10](https://github.com/AdrianJTorres/OldPhoneDeck/pull/10).
 Base: `c3fdff8906f88decfd8fdde4335d8bad17df953f`.
 
 Remaining ADR-010 gap: controls already render from complete configuration in saved order;
@@ -635,4 +636,12 @@ rerun, real app/Shortcut execution, production modification, merge or deployment
 Isolated HTTPS preview uses ports 8085/8087/8088, fresh private configuration/token/TLS and no
 approved Shortcuts, with production configuration denied by its sandbox. Its original seven
 synthetic controls and both widgets are restored. Browser checks do not establish physical
-acceptance. M3.4 and overall M3 completion remain pending Steering's decision. **Stop for Steering.**
+acceptance by themselves. Steering subsequently confirmed implementation and physical iPhone 11
+acceptance **PASS** for `46133b6b0b36daf9ce9898297d11523034e06c60` and authorized publication,
+PR creation, merge and GitHub verification. The accepted product/test blobs remain unchanged;
+the follow-up records status only. PR #10 integrates that implementation into `main` using the
+established merge-commit method; this integration record takes effect with that merge.
+Existing tests/build/browser/independent-review evidence is reused without repetition.
+**Production is unchanged. M3.4 production deployment is not authorized or claimed.**
+Overall M3 production closure and any next milestone remain for Steering; no M4 work begins.
+**Stop for Steering after GitHub integration verification.**

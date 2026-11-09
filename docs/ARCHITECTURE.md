@@ -546,7 +546,7 @@ One file: inline CSS, markup and one ES5 IIFE. No framework or build step.
   HTTPS page.
 - **Views:** `deck` (8 keys + now playing + Internet + Batteries), `phone` (camera/mic
   streaming), plus three sheets: Take note, app editor, token login.
-- **Extension reality (M3.4 implementation, pending Steering):** `renderKeys()` consumes the
+- **Extension reality (M3.4 accepted; GitHub integration via PR #10):** `renderKeys()` consumes the
   complete configured controls in order through `controlInfo()` (app/Shortcut/unknown), with
   seven editable slots plus the fixed "Take note" key. `WIDGET_CARDS` drives both visibility
   and `layoutWidgetCards()` placement: an equal-width row on modern screens, a column on
@@ -557,7 +557,8 @@ One file: inline CSS, markup and one ES5 IIFE. No framework or build step.
   deliberate integrations; this is not a runtime dashboard schema. The key grid, media/Phone
   templates, screen-region geometry, and Internet/Batteries editor fields remain explicit.
   Those fixed choices preserve this deck and do not prevent a future status-card integration.
-  ADR-010's practical control/widget rendering gap is covered; acceptance remains with Steering.
+  ADR-010's practical control/widget rendering gap is covered; Steering confirms implementation
+  and physical iPhone 11 acceptance PASS. GitHub integration does not claim production deployment.
 
 ## 12. Known architectural limitations
 
@@ -578,7 +579,7 @@ These are structural, not bugs to fix in passing:
    resources; M2.3 puts app launch behind an authorized action boundary (accepted).
    One token still has one scope, and the legacy action-shaped routes are not migrated.
 5. Controls use the configuration data model and status cards share descriptor-based placement
-   (M3.4, pending Steering). Screen regions, card contents and data collectors remain explicit.
+   (M3.4 accepted; PR #10). Screen regions, card contents and data collectors remain explicit.
 6. Parser/admission, HTTP/media lifecycle, resource accounting, media bounds, the action
    boundary, codec/store, launcher route and shipped client logic have Swift Testing coverage. Hardware playback and other
    modules lack isolated tests; there is no CI.
