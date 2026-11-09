@@ -27,6 +27,16 @@ enum LauncherRoute {
         return .success(WidgetPreferences(internet: internet == "1", batteries: batteries == "1"))
     }
 
+    /// Full controls use the same strict codec as disk; mixed wire formats are refused.
+    static func parseControls(_ params: [String: String]) -> Result<[DeckControl], HTTPFailure> {
+        let failure = HTTPFailure(status: 400, message: "invalid-controls")
+        guard let text = params["controls"], params["n"] == nil, params["paths"] == nil else { return .failure(failure) }
+        let envelope = "{\"version\":2,\"controls\":" + text + ",\"widgets\":{\"internet\":true,\"batteries\":true}}"
+        guard case .v2(let document) = ConfigurationDecoder.decode(.data(Data(envelope.utf8))),
+              document.controls.count <= ConfigurationStorePolicy.maximumAppControls else { return .failure(failure) }
+        return .success(document.controls)
+    }
+
     /// The parsed selection from `n`/`paths`, or a refusal token.
     enum SelectionResult: Equatable {
         case success([String])
@@ -93,10 +103,13 @@ enum LauncherRoute {
         var json: [String: Any] = [
             "selected": read.selected ?? NSNull(),
             "all": catalog,
+            "shortcuts": [[String: Any]](),
             "configuration": read.status.rawValue,
             "writable": read.writable,
             "widgets": read.widgets.map { ["internet": $0.internet, "batteries": $0.batteries] } as Any? ?? NSNull(),
         ]
+        json["controls"] = (read.status == .unconfigured ? [] : read.document?.controls.map(ConfigurationCanonicalForm.controlObject)) as Any? ?? NSNull()
+        json["controlsWritable"] = read.controlsWritable
         // The single permitted error-payload field (ADR-015): the integer *is* the diagnosis.
         if let version = read.version { json["version"] = version }
         // Absent exactly when the store withheld it — a contended migration read must not publish
@@ -112,6 +125,7 @@ enum LauncherRoute {
         switch rejection {
         case .tooManyKeys: return (400, "too-many-keys")
         case .entryTooLong: return (400, "entry-too-long")
+        case .invalidControls: return (400, "invalid-controls")
         case .missingRevision: return (400, "missing-revision")
         case .state(let token): return (409, token.rawValue)
         case .stale: return (409, "stale")
@@ -129,7 +143,8 @@ enum LauncherRoute {
         _ request: HTTPRequest,
         store: ConfigurationStore,
         on connection: HTTPConnection,
-        catalog: @escaping () -> [[String: String]] = Apps.list
+        catalog: @escaping () -> [[String: String]] = Apps.list,
+        shortcuts: ShortcutService? = nil
     ) {
         // Validation is repeated here rather than trusted to the route switch's generic pass.
         if let failure = DeckRoute.validateParameters(request) {
@@ -140,7 +155,9 @@ enum LauncherRoute {
         case "GET":
             // 200 in every degraded state (§13): an unreachable configuration is a visible
             // read-only state, never an empty deck and never an HTTP error.
-            connection.respondJSON(responseJSON(store.load(), catalog: catalog()))
+            var json = responseJSON(store.load(), catalog: catalog())
+            json["shortcuts"] = shortcuts?.catalog() ?? []
+            connection.respondJSON(json)
 
         case "POST":
             let params = request.params
@@ -148,6 +165,23 @@ enum LauncherRoute {
             switch parseWidgets(params) {
             case .success(let value): widgets = value
             case .failure(let failure): return connection.respond(failure.status, text: failure.message)
+            }
+            if params["controls"] != nil {
+                let controls: [DeckControl]
+                switch parseControls(params) {
+                case .failure(let failure): return connection.respond(failure.status, text: failure.message)
+                case .success(let value): controls = value
+                }
+                switch store.write(paths: nil, expectedRevision: params["expected"], widgets: widgets, controls: controls) {
+                case .saved(let read):
+                    var json = responseJSON(read, catalog: catalog(), saved: read.document?.controls.count ?? 0)
+                    json["shortcuts"] = shortcuts?.catalog() ?? []
+                    connection.respondJSON(json)
+                case .rejected(let failure):
+                    let refusal = Self.refusal(failure.rejection)
+                    connection.respond(refusal.status, text: refusal.token)
+                }
+                return
             }
             switch parseSelection(params) {
             case .success(let paths):

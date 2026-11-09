@@ -204,7 +204,7 @@
   <!-- The deck: 8 keys + widgets -->
   <div id="deck" class="view on">
     <div id="keys"></div>
-    <div id="hint">Hold any key to choose apps</div>
+    <div id="hint">Hold any key to choose apps or Shortcuts</div>
     <div id="music" class="card">
       <div id="mNote">♪</div><img id="mArt" class="none" alt="">
       <div id="mInfo"><div id="mTitle">Nothing playing</div><div id="mArtist">Spotify or Apple Music</div></div>
@@ -260,7 +260,7 @@
     </div>
   </div>
 
-  <!-- Choose the 7 apps -->
+  <!-- Choose the 7 controls -->
   <div id="edit" class="scrim">
     <div class="sheet">
       <fieldset id="widgetChoices">
@@ -268,7 +268,7 @@
         <label><input id="editInternet" type="checkbox"> Internet</label>
         <label><input id="editBatteries" type="checkbox"> Batteries</label>
       </fieldset>
-      <input id="filter" placeholder="Search apps" autocorrect="off" autocapitalize="none">
+      <input id="filter" placeholder="Apps or Shortcuts" autocorrect="off" autocapitalize="none">
       <div class="btns"><div class="btn primary" id="editSave">Save</div><div class="btn" id="editCancel">Cancel</div></div>
       <div id="editCount"></div>
       <div id="editList"></div>
@@ -288,7 +288,7 @@
 (function () {
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
-  var APP_SLOTS = 7;   // 8 keys: 7 apps + Ask Claude
+  var APP_SLOTS = 7;   // 8 keys: 7 controls + Ask Claude
   var modern = 'isSecureContext' in window;   // iOS 11.1+; the 4S is never "modern"
 
   // ---------- plumbing ----------
@@ -304,6 +304,7 @@
     r.onload = function () { if (cb) cb(r.status, r.responseText); };
     r.onerror = function () { if (cb) cb(0, ''); };
     r.send(body === undefined ? null : body);
+    return r;
   }
   function toast(msg) {
     var t = $('toast'); t.textContent = msg; t.style.display = 'block';
@@ -471,7 +472,7 @@
   };
   function applyConfig(d) {
     cfg.state = d.configuration || 'unconfigured';
-    cfg.writable = d.writable !== false;
+    cfg.writable = typeof d.controlsWritable === 'boolean' ? d.controlsWritable : d.writable !== false;
     cfg.revision = d.revision || '';
     cfg.text = cfg.writable ? '' : (CFG_TEXT[cfg.state] || 'Keys are read-only.');
     var w = $('cfgWarn');
@@ -485,7 +486,9 @@
     try { d = JSON.parse(text); } catch (e) { return null; }
     if (!d || !Array.isArray(d.all) || (d.selected !== null && !Array.isArray(d.selected))) return null;
     if (d.widgets != null && (!d.widgets || typeof d.widgets.internet !== 'boolean' || typeof d.widgets.batteries !== 'boolean')) return null;
-    if (d.writable && !d.widgets) return null;
+    if ((d.writable || d.controlsWritable) && !d.widgets) return null;
+    if (d.controls != null && !Array.isArray(d.controls)) return null;
+    if (d.controlsWritable && !Array.isArray(d.controls)) return null;
     return d;
   }
   // A notepad with a pencil: quick capture that becomes a Claude conversation.
@@ -524,17 +527,87 @@
     tap(k, onTap, onHold);
     return k;
   }
+  function cloneControls(controls) { return JSON.parse(JSON.stringify(controls)); }
+  function shortcutByUUID(uuid) {
+    var all = launcher.shortcuts || [];
+    for (var i = 0; i < all.length; i++) if (all[i].uuid.toLowerCase() === String(uuid).toLowerCase()) return all[i];
+    return null;
+  }
+  function controlInfo(c) {
+    var a, sc, p = c.parameters || {}, title = c.presentation && c.presentation.title;
+    if (c.action === 'app.launch') {
+      a = byPath(p.path);
+      return { name: title || (a ? a.name : p.path || 'Unavailable app'), path: p.path, available: !!a, kind: 'app' };
+    }
+    if (c.action === 'shortcut.run') {
+      sc = shortcutByUUID(p.uuid);
+      return { name: title || (sc ? sc.label : 'Unapproved Shortcut'), uuid: p.uuid, available: !!sc,
+               kind: 'shortcut', unavailable: sc && sc.availability === 'unavailable' };
+    }
+    return { name: title || c.action, available: false, kind: 'unknown' };
+  }
+  var SHORTCUT_MESSAGES = {
+    'running': 'Running', 'completed': 'Completed (CLI exit 0)', 'failed': 'Failed',
+    'timed-out': 'Timed out — outcome unknown', 'busy': 'Busy',
+    'not-authorized': 'Not authorized', 'unavailable': 'Unavailable'
+  };
+  // Bound feedback requests independently of the server execution deadline. Never retry a POST.
+  function shortcutRequest(method, path, body, callback) {
+    var done = false, request, timer = setTimeout(function () {
+      finish(0, '');
+      if (request) request.abort();
+    }, 5000);
+    function finish(status, text) {
+      if (done) return;
+      done = true; clearTimeout(timer); callback(status, text);
+    }
+    request = xhr(method, path, body, finish);
+  }
+  var shortcutPolling = false;
+  function runShortcut(uuid) {
+    if (shortcutPolling) return toast('Busy');
+    shortcutPolling = true;
+    shortcutRequest('POST', url('/shortcut'), 'uuid=' + encodeURIComponent(uuid || ''), function (s, text) {
+      var d;
+      try { d = JSON.parse(text); } catch (e) {}
+      if (s !== 200 || !d || !d.id) {
+        shortcutPolling = false;
+        return toast(s === 409 ? 'Busy' : s === 403 ? 'Not authorized' : 'Cannot confirm run — outcome unknown');
+      }
+      toast('Running');
+      pollShortcut(d.id, 0);
+    });
+  }
+  function pollShortcut(id, attempts) {
+    // Status polling never resubmits execution. Lost feedback leaves an unknown outcome.
+    shortcutRequest('GET', url('/shortcut', 'id=' + encodeURIComponent(id)), null, function (s, text) {
+      var d;
+      try { d = JSON.parse(text); } catch (e) {}
+      if (s !== 200 || !d || !SHORTCUT_MESSAGES[d.status]) {
+        shortcutPolling = false; return toast('Cannot confirm run — outcome unknown');
+      }
+      if (d.status !== 'running') { shortcutPolling = false; return toast(SHORTCUT_MESSAGES[d.status]); }
+      if (attempts >= 45) { shortcutPolling = false; return toast('Cannot confirm run — outcome unknown'); }
+      setTimeout(function () { pollShortcut(id, attempts + 1); }, 1000);
+    });
+  }
   function renderKeys() {
-    var box = $('keys'), apps = [];
-    (launcher.selected || []).forEach(function (p) { var a = byPath(p); if (a && apps.length < APP_SLOTS) apps.push(a); });
+    var box = $('keys'), controls = launcher.controls;
+    if (!Array.isArray(controls)) controls = (launcher.selected || []).map(function (p) {
+      return { action: 'app.launch', parameters: { path: p } };
+    });
     box.innerHTML = '';
     for (var i = 0; i < APP_SLOTS; i++) {
-      (function (a) {
-        if (!a) { box.appendChild(key('empty', 'Add', '', openEditor, openEditor)); return; }
-        box.appendChild(key('', a.name, '<img src="' + url('/icon', 'path=' + encodeURIComponent(a.path)) + '">', function () {
+      (function (c) {
+        if (!c) { box.appendChild(key('empty', 'Add', '', openEditor, openEditor)); return; }
+        var a = controlInfo(c), label = a.name + (!a.available || a.unavailable ? ' · Unavailable' : '');
+        var inner = a.kind === 'app' && a.available ? '<img src="' + url('/icon', 'path=' + encodeURIComponent(a.path)) + '">' : (a.kind === 'shortcut' ? '◆' : '?');
+        box.appendChild(key(a.available ? '' : 'empty', label, inner, function () {
+          if (!a.available) return toast(a.kind === 'shortcut' ? 'Not authorized / unavailable' : 'Unavailable');
+          if (a.kind === 'shortcut') return runShortcut(a.uuid);
           xhr('POST', url('/launch'), 'path=' + encodeURIComponent(a.path), function (s) { toast(s === 200 ? 'Opening ' + a.name : 'Launch failed'); });
         }, openEditor));
-      })(apps[i]);
+      })(controls[i]);
     }
     box.appendChild(key('claude', 'Take note', CLAUDE_SVG, openClaude, function () {
       xhr('POST', url('/claude'), 'text=', function () { toast('Claude is open on the Mac'); });
@@ -544,7 +617,7 @@
   // ---------- editor (hold any key) ----------
   var draft = [];
   function openEditor() {
-    draft = (launcher.selected || []).slice(0, APP_SLOTS);
+    draft = Array.isArray(launcher.controls) ? cloneControls(launcher.controls) : (launcher.selected || []).slice(0, APP_SLOTS);
     $('editInternet').checked = !launcher.widgets || launcher.widgets.internet;
     $('editBatteries').checked = !launcher.widgets || launcher.widgets.batteries;
     $('filter').value = '';
@@ -552,6 +625,7 @@
     renderEditor();
   }
   function renderEditor() {
+    if (Array.isArray(launcher.controls)) return renderControlsEditor();
     var box = $('editList'), q = $('filter').value.toLowerCase();
     box.innerHTML = '';
     $('editCount').textContent = draft.length + ' of ' + APP_SLOTS + ' keys · ▲ moves an app earlier';
@@ -577,12 +651,52 @@
       box.appendChild(row);
     });
   }
+  function newControl(action, parameters) {
+    var n = 1, id;
+    do { id = 'key-' + n++; } while (draft.some(function (c) { return c.id === id; }));
+    return { id: id, action: action, parameters: parameters };
+  }
+  function renderControlsEditor() {
+    var box = $('editList'), q = $('filter').value.toLowerCase(), choices = [];
+    box.innerHTML = '';
+    $('editCount').textContent = draft.length + ' of ' + APP_SLOTS + ' keys · ▲ moves a key earlier';
+    draft.forEach(function (c, idx) { choices.push({ control: c, idx: idx }); });
+    launcher.all.forEach(function (a) {
+      if (!draft.some(function (c) { return c.action === 'app.launch' && c.parameters.path === a.path; }))
+        choices.push({ control: { action: 'app.launch', parameters: { path: a.path } }, idx: -1 });
+    });
+    (launcher.shortcuts || []).forEach(function (sc) {
+      if (!draft.some(function (c) { return c.action === 'shortcut.run' && String(c.parameters.uuid).toLowerCase() === sc.uuid.toLowerCase(); }))
+        choices.push({ control: { action: 'shortcut.run', parameters: { uuid: sc.uuid } }, idx: -1 });
+    });
+    choices.forEach(function (choice) {
+      var c = choice.control, idx = choice.idx, a = controlInfo(c), on = idx >= 0, full = !on && draft.length >= APP_SLOTS;
+      if (q && a.name.toLowerCase().indexOf(q) < 0) return;
+      var row = document.createElement('div');
+      row.className = 'erow' + (on ? ' on' : '') + (full ? ' full' : '');
+      row.innerHTML = '<div class="ck">' + (on ? idx + 1 : '') + '</div><img><div class="nm"></div>' + (idx > 0 ? '<div class="up">▲</div>' : '');
+      if (a.kind === 'app' && a.available) row.children[1].src = url('/icon', 'path=' + encodeURIComponent(a.path));
+      else row.children[1].style.visibility = 'hidden';
+      row.children[2].textContent = a.name + (a.kind === 'shortcut' ? ' · Shortcut' : '') + (!a.available || a.unavailable ? ' · Unavailable' : '');
+      if (idx > 0) row.lastChild.addEventListener('click', function (e) {
+        e.stopPropagation(); draft.splice(idx, 1); draft.splice(idx - 1, 0, c); renderEditor();
+      });
+      row.addEventListener('click', function () {
+        if (!cfg.writable) return toast(cfg.text || 'Keys are read-only');
+        if (on) draft.splice(idx, 1);
+        else if (full) return toast('All 7 keys are used: remove one first');
+        else draft.push(newControl(c.action, c.parameters));
+        renderEditor();
+      });
+      box.appendChild(row);
+    });
+  }
   $('filter').addEventListener('input', renderEditor);
   tap($('editCancel'), function () { sheet('edit', false); });
   tap($('editSave'), function () {
     if (!cfg.writable) return toast(cfg.text || 'Keys are read-only');
-    var body = 'n=' + draft.length
-             + '&paths=' + encodeURIComponent(draft.join('\n'))
+    var body = (Array.isArray(launcher.controls) ? 'controls=' + encodeURIComponent(JSON.stringify(draft))
+             : 'n=' + draft.length + '&paths=' + encodeURIComponent(draft.join('\n')))
              + '&expected=' + encodeURIComponent(cfg.revision)
              + '&internet=' + ($('editInternet').checked ? '1' : '0')
              + '&batteries=' + ($('editBatteries').checked ? '1' : '0');

@@ -19,6 +19,7 @@ struct ActionID: Hashable, RawRepresentable {
 
     /// The only capability migrated onto the boundary in M2.3.
     static let appLaunch = ActionID(rawValue: "app.launch")!
+    static let shortcutRun = ActionID(rawValue: "shortcut.run")!
 
     private static func isNameByte(_ b: UInt8) -> Bool {
         (b >= 97 && b <= 122) || (b >= 48 && b <= 57) || b == 46 // a-z, 0-9, "."
@@ -29,6 +30,7 @@ struct ActionID: Hashable, RawRepresentable {
 /// case, so a new kind must be authorized explicitly before it can execute.
 enum ActionKind: Equatable {
     case launchApplication
+    case runShortcut
 }
 
 /// Server-authored display metadata. It describes an action and never authorizes one; it is
@@ -44,6 +46,7 @@ struct ActionDescriptor: Equatable {
 /// environment variable or working directory. No case can express those (ADR-005).
 enum ActionParameters: Equatable {
     case appPath(String)
+    case shortcutUUID(ShortcutUUID)
 }
 
 /// Well-formedness rules for an app-launch path. Being well formed is not being approved:
@@ -68,6 +71,8 @@ enum ActionOutcome: Equatable {
     case unknownAction
     case invalidParameters
     case notAuthorized
+    case unavailable
+    case busy
 }
 
 /// The single server-authoritative path from a caller to an approved macOS action.
@@ -78,23 +83,27 @@ struct ActionRegistry {
     /// rename or re-describe one, and there is no registration entry point.
     private static let descriptors: [ActionID: ActionDescriptor] = [
         .appLaunch: ActionDescriptor(id: .appLaunch, displayName: "Launch app", kind: .launchApplication),
+        .shortcutRun: ActionDescriptor(id: .shortcutRun, displayName: "Run Shortcut", kind: .runShortcut),
     ]
 
     private let isApprovedAppPath: (String) -> Bool
     private let launchApp: (String) -> Void
+    private let shortcuts: ShortcutService?
 
     /// Production wiring: the Mac's own approved application catalog and the existing
     /// main-queue launch. This is the only registry that can reach NSWorkspace, so automated
     /// tests must build one through the injecting initializer below instead — a test that
     /// holds the real executor could open an application if an authorization gate regressed.
-    init() {
-        self.init(approvedAppPath: Apps.isKnown, launchApp: { AppLaunchExecutor.schedule($0) })
+    init(shortcuts: ShortcutService? = nil) {
+        self.init(approvedAppPath: Apps.isKnown, launchApp: { AppLaunchExecutor.schedule($0) }, shortcuts: shortcuts)
     }
 
     /// Injecting initializer: the authorization policy and the execution callback are
     /// supplied by the caller, which is what makes the boundary testable without touching
     /// NSWorkspace. Production passes `Apps.isKnown` and `AppLaunchExecutor.schedule`.
-    init(approvedAppPath: @escaping (String) -> Bool, launchApp: @escaping (String) -> Void) {
+    init(approvedAppPath: @escaping (String) -> Bool, launchApp: @escaping (String) -> Void,
+         shortcuts: ShortcutService? = nil) {
+        self.shortcuts = shortcuts
         self.isApprovedAppPath = approvedAppPath
         self.launchApp = launchApp
     }
@@ -103,7 +112,7 @@ struct ActionRegistry {
     func descriptor(for id: ActionID) -> ActionDescriptor? { Self.descriptors[id] }
 
     /// Authorizes, then dispatches. Every rejection returns before the executor is reached.
-    func dispatch(_ id: ActionID, parameters: ActionParameters) -> ActionOutcome {
+    func dispatch(_ id: ActionID, parameters: ActionParameters, runID: String? = nil) -> ActionOutcome {
         guard let descriptor = Self.descriptors[id] else { return .unknownAction }
         switch (descriptor.kind, parameters) {
         case (.launchApplication, .appPath(let candidate)):
@@ -113,6 +122,10 @@ struct ActionRegistry {
             guard isApprovedAppPath(validated.path) else { return .notAuthorized }
             launchApp(validated.path)
             return .dispatched
+        case (.runShortcut, .shortcutUUID(let uuid)):
+            guard let shortcuts, let runID else { return .notAuthorized }
+            return shortcuts.start(uuid, runID: runID)
+        default: return .invalidParameters
         }
     }
 }

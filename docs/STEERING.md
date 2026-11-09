@@ -147,14 +147,14 @@ V1 is reached when, on the physical iPhone 11, a user can:
 V1 is not defined by feature count. It is defined by those six properties being true
 and demonstrable.
 
-## 9. Current status (2026-11-08)
+## 9. Current status (2026-11-09)
 
 | Milestone | State |
 |---|---|
 | M0 — Baseline verification | **COMPLETE** — fork created, clone configured, baseline `e622184` builds and runs, verified on the iPhone 11 |
 | M1 — Understand & document | **COMPLETE** — M1.1 repository analysis and M1.2 project documentation both reviewed and accepted by Steering |
 | M2 — Foundations | **IN PROGRESS** — M2.1–M2.4 accepted by Steering; ADR-015 and ADR-016 remain ratified. **M2.5 COMPLETE (2026-11-08)**: S1–S7 accepted; production migration/cutover, rollback rehearsal, production authentication rotation and physical iPhone 11 acceptance PASS. New authenticated device access works and the previous token is rejected. Phase A is complete; Phase B GitHub consolidation is submitted for Steering acceptance without merge or branch deletion. |
-| M3 — PhoneDeck UI | **IN PROGRESS** — M3.1 production accepted at `14872a3a`; M3.2.1 physical iPhone 11 acceptance PASS confirmed on 2026-11-09, independent review PASS and 405 automated tests PASS. GitHub consolidation pending Steering acceptance; no merge or production V2 cutover authorized. |
+| M3 — PhoneDeck UI | **IN PROGRESS** — M3.1 production accepted at `14872a3a`; M3.2.1 physical iPhone 11 acceptance PASS confirmed on 2026-11-09, independent review PASS and 405 automated tests PASS. **M3.3 functional and physical iPhone acceptance PASS**, accepted by Steering on 2026-11-09 at `873848566503e169ec98cfbd228c5e4ba98ac851`; one independent T3 review with focused closure PASS. M3.3 GitHub consolidation is authorized on `m3.3/shortcuts` for a PR to the fork's `main`; merge and production deployment remain pending separate authorization. |
 | M4 — Developer Deck | Not started |
 | M5 — Security & reliability | Not started |
 | M6 — PhoneDeck V1 | Not started |
@@ -170,3 +170,17 @@ minimum ingress hardening and the allowlisted action boundary; M5 performs the i
 review and the remaining hardening. The absent/unparseable configuration finding is **closed**:
 M2.5 wires the codec/store distinction into the read path and client, and production cutover is
 accepted. The remaining M5 risks stay open.
+
+M3.3 acceptance evidence: execution and completion of the harmless UUID test from the isolated
+iPhone 11 preview on port 8077 are verified. The user observed Completed without a consent
+dialog; the Text-only test need not cause visible Mac activity. Three CLI executions were
+observed, and the user reports very likely three key presses. Exact HTTP request-to-process
+correlation is unavailable; no automatic-duplication defect is proven. Steering lifted that
+blocker and accepted M3.3 functional and physical behavior. Focused dispatch checks confirm
+one request per tap, no automatic retry, concurrent execution rejection, timeout-unknown
+preservation and the CLI exit-0 completion gate. The existing 422-test baseline, 33 focused
+client/launcher tests, warning-free release build and independent review are retained; only
+the missing browser touch regression used new fake responses. No real execution or broad
+review/test repetition is part of consolidation. M3.3 production deployment remains pending;
+publication and PR preparation do not authorize merge, production restart, credential/TLS
+rotation or real configuration changes. See ROADMAP's M3.3 entry for the evidence boundary.

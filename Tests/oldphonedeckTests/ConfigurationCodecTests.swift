@@ -365,7 +365,7 @@ struct ConfiguredActionTests {
         #expect(decode(document(json)) == .malformed(.invalidActionID))
     }
 
-    @Test(arguments: ["app.quit", "shell.exec", "media.next", "shortcut.run", "admin.everything",
+    @Test(arguments: ["app.quit", "shell.exec", "media.next", "shortcut.unapproved", "admin.everything",
                       "app.relaunch", "git.push", "system.shutdown"])
     func anUnregisteredActionDecodesButIsNotExecutable(_ raw: String) {
         // Validity and executability are different questions. A document naming an action this build
@@ -383,7 +383,9 @@ struct ConfiguredActionTests {
         // `ActionRegistryTests.swift`; no test may construct the production `ActionRegistry()`.
         let registry = testRegistry(recorder: LaunchRecorder())
         #expect(registry.descriptor(for: .appLaunch) != nil)
-        for raw in ["app.quit", "shell.exec", "media.next", "shortcut.run"] {
+        #expect(registry.descriptor(for: .shortcutRun) != nil)
+        #expect(registry.dispatch(.shortcutRun, parameters: .shortcutUUID(ShortcutUUID("11111111-1111-4111-8111-111111111111")!), runID: "test") == .notAuthorized)
+        for raw in ["app.quit", "shell.exec", "media.next", "shortcut.unapproved"] {
             guard let id = ActionID(rawValue: raw) else {
                 Issue.record("\(raw) should be syntactically valid")
                 continue

@@ -861,3 +861,65 @@ independent review covers codec/store/wire integrity and rollback. Physical iPho
 must verify Save/Cancel, all four combinations and re-enable, reload, server restart, Home Screen,
 portrait/landscape and existing apps/Claude/media/Phone/status. Automated browser checks do not
 establish physical acceptance. No production deployment or merge is authorized by this ADR.
+
+## ADR-018 — Explicitly approved UUID Shortcuts and complete-control editing
+
+**Date:** 2026-11-09. **Status:** implementation authorized by Steering; independent
+review and physical iPhone 11 acceptance are separate gates. Base: `96c637f84bfaf5872173b440178459906c7eda43`.
+
+**Evidence and scope.** Steering reports that the harmless PhoneDeck M3.3 UUID Test
+resolved by UUID through `/usr/bin/shortcuts run`, exited 0 after 13.654 seconds and
+printed `PhoneDeck UUID proof`. Apple's engine showed an output-sharing consent prompt;
+Allow Always resolved it. This proves Terminal UUID execution only. It does not prove
+unattended execution in the server context. No real Shortcut run is authorized by this ADR.
+
+**Authority.** `shortcut.run` is registered alongside `app.launch`. The action boundary
+accepts a strictly typed UUID and consults the server-owned `ShortcutService`. The private
+`shortcut-approvals.json` array contains only UUID/display-label pairs, is loaded at server
+startup from `--config-dir`, and defaults to no approvals. The file must be a regular,
+non-symlink, singly linked file owned by the current user with no group/other access,
+limited to 16 KiB and 16 unique entries. Invalid input closes all approvals. Labels are
+bounded display data. Neither discovery, configuration nor HTTP can add approvals.
+Personal identifiers/approvals stay outside Git; the filename is ignored defensively.
+Only the explicitly approved harmless test belongs in the isolated preview.
+
+**Execution.** The authenticated `POST /shortcut` accepts `uuid`, and returns a server-issued
+run ID immediately; `GET /shortcut?id=…` polls the latest run. Both use existing header
+admission, token scope, body deadlines and shared connection budget. POST is capped at
+1 KiB; GET has no body. The registry rejects unapproved identifiers before reserving any
+process. One shared slot spans a fresh, read-only `/usr/bin/shortcuts list --show-identifiers`
+lookup (five-second bound) and the authorized `/usr/bin/shortcuts run UUID` (30 seconds).
+Names never enter an execution argument. Foundation Process uses a fixed executable and
+fixed argument forms, null-device stdin, nonblocking bounded stdout/stderr drainage, at
+most 64 KiB retained stdout, and a dedicated asynchronous queue. Output and consent details
+are never returned to the phone. No shell, arbitrary options, queue or automatic retry exists.
+A timeout publishes UNKNOWN side-effect outcome immediately, sends SIGTERM and escalates
+to SIGKILL after 500 ms. The slot remains held until the owned CLI exits and handles close.
+Terminating that CLI cannot guarantee Apple's external engine or effects were cancelled.
+Completed means CLI exit 0, not independently verified effects. Status retention is bounded
+to the latest run; missing/network-lost status also means unknown outcome, never a retry.
+
+**Configuration integrity.** Configuration V2 remains the format. `POST /launcher` may send
+`controls` as a complete strict-codec JSON array with `expected` revision and optional paired
+widget flags. `controls` cannot be mixed with legacy `n`/`paths`. The store validates and
+commits the complete ordered controls under its existing nonblocking lock, revision,
+atomic verification and recovery path. Unknown actions and their flat parameters, custom
+IDs, labels, missing applications and unapproved Shortcuts are preserved as data and remain
+inert unless separately authorized. Shortcut configuration retains flat `uuid` parameters;
+only dispatch constructs `ShortcutUUID`. Saving a document never dispatches it.
+Legacy application-only writes still refuse mixed/metadata-bearing documents. The response
+adds complete `controls`, `controlsWritable` and an approved-only `shortcuts` catalogue;
+legacy `selected`/`writable` keep their original path-projection meaning.
+
+**Client.** The existing ES5 editor displays configured entries first in exact order, then
+available Mac apps and approved Shortcuts, using server labels through `textContent`.
+Seven positions remain; a full selection requires a removal before an addition. Reordering
+moves whole controls; unchanged controls retain their IDs, parameters and presentation.
+Unavailable/inert entries remain visible in place. Save/Cancel, revisions, widgets and key
+rendering are reused. New IDs are chosen without colliding with the draft. Nothing changes
+the user's existing seven application selections until an explicit editor Save.
+
+**Consent and acceptance.** See `docs/M3.3-SHORTCUTS.md`. A separately authorized real
+server-triggered test must use the intended binary, login session and launch context, with
+human handling of any macOS consent. Terminal's Allow Always is not inherited evidence.
+Builds and tests use fakes. Production changes, merge and acceptance remain unauthorized.

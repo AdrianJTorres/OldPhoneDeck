@@ -133,7 +133,8 @@ let music = Music()
 music.start()
 
 // Approved-action boundary: the only route from a request to an approved macOS action.
-let actions = ActionRegistry()
+let shortcuts = ShortcutService(approvals: ShortcutApprovals.load(directory: configDir), runner: BoundedShortcutRunner())
+let actions = ActionRegistry(shortcuts: shortcuts)
 
 // MARK: Routes
 
@@ -189,7 +190,7 @@ let routes: (HTTPRequest, HTTPConnection) -> Void = { req, conn in
     case .launcherRead, .launcherSave:
         // The same shared handler pattern as AppLaunchRoute: one entry point for GET and POST,
         // validation re-run inside, and no caller can reach the store without the check.
-        LauncherRoute.handle(req, store: configStore, on: conn)
+        LauncherRoute.handle(req, store: configStore, on: conn, shortcuts: shortcuts)
     case .icon:
         let path = p["path"] ?? ""
         guard Apps.isKnown(path) else { return conn.respond(404, text: "unknown app") }
@@ -197,6 +198,8 @@ let routes: (HTTPRequest, HTTPConnection) -> Void = { req, conn in
             let png = Apps.icon(path) ?? Data()
             server.queue.async { conn.respond(200, "image/png", png) }
         }
+    case .shortcutRun, .shortcutStatus:
+        ShortcutRoute.handle(req, registry: actions, service: shortcuts, on: conn)
     case .launch:
         // The same shared handler the integration tests exercise: it re-runs the M2.1
         // parameter check, then lets the registry authorize and dispatch.
