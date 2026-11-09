@@ -19,6 +19,9 @@ final class LauncherClientHarness {
         // save callbacks run unchanged; a reply may be supplied from a real loopback HTTP call.
         try run(#"""
         var elements = {}, requests = [], notices = [], sheets = [], APP_SLOTS = 7;
+        var timers = {}, timerID = 0;
+        function setTimeout(fn, delay) { timers[++timerID] = {fn:fn, delay:delay}; return timerID; }
+        function clearTimeout(id) { delete timers[id]; }
         function Element() {
           this.style = {}; this.children = []; this.attributes = {}; this.listeners = {};
           this.className = ''; this.textContent = ''; this.value = '';
@@ -46,7 +49,9 @@ final class LauncherClientHarness {
         function sheet(id, open) { sheets.push([id, open]); }
         function url(path, extra) { return path + '?k=' + testToken + (extra ? '&' + extra : ''); }
         function xhr(method, path, body, callback) {
-          requests.push({ method: method, path: path, body: body, callback: callback });
+          var request = { method: method, path: path, body: body, callback: callback, aborted:false };
+          requests.push(request);
+          return { abort:function(){request.aborted=true;} };
         }
         function openClaude() {}
         """#)

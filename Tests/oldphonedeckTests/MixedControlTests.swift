@@ -177,6 +177,25 @@ private extension ConfigurationWriteOutcome {
         try c.run("var idBefore = draft[6].id; $('editList').children[6].lastChild.listeners.click({stopPropagation:function(){}})")
         #expect(try c.run("draft[5].id === idBefore").toBool())
     }
+    @Test func blackholedShortcutRequestsAbortReportUnknownAndIgnoreLateReplies() throws {
+        let c = try LauncherClientHarness()
+        try c.run("loadKeys()")
+        try c.reply(response())
+        try c.run("$('keys').children[1].tap(); var pending = requests[0]; var deadline = timers[timerID]; deadline.fn()")
+        #expect(try c.run("deadline.delay").toInt32() == 5000)
+        #expect(try c.run("pending.aborted && !shortcutPolling").toBool())
+        #expect(try c.run("notices[notices.length-1]").toString() == "Cannot confirm run — outcome unknown")
+        try c.reply(#"{"id":"11111111-1111-4111-8111-111111111111","status":"running"}"#)
+        #expect(try c.run("requests.length").toInt32() == 0)
+        // A separately chosen second tap may submit once; its status request has the same bound.
+        try c.run("$('keys').children[1].tap()")
+        try c.reply(#"{"id":"11111111-1111-4111-8111-111111111111","status":"running"}"#)
+        try c.run("var statusRequest = requests[0]; timers[timerID].fn()")
+        #expect(try c.run("statusRequest.aborted && !shortcutPolling").toBool())
+        try c.reply(#"{"status":"completed"}"#)
+        #expect(try c.run("requests.length").toInt32() == 0)
+        #expect(try c.run("notices[notices.length-1]").toString() == "Cannot confirm run — outcome unknown")
+    }
     @Test func shortcutFeedbackNeverResubmitsExecution() throws {
         let c = try LauncherClientHarness()
         try c.run("loadKeys()")

@@ -558,3 +558,14 @@ concurrent starts, busy/failure/timeout/no retry, bounded fake-process cleanup, 
 file refusal, full mixed metadata/order/widget preservation, stale/concurrent saves, verified
 failed-write recovery, seven retained application controls and client behavior. HTTP tests use
 production admission/handlers with fake executors; no real Shortcut was executed.
+
+The single fresh independent T3 review of `8f69d023153eb6f2c4dbb7d39a415f8c892d5495`
+reported no blockers or major findings and one minor feedback-lifetime gap: a blackholed
+execution/status HTTP request could leave the phone showing Busy indefinitely. The owner
+added a Shortcut-only five-second watchdog that aborts hung requests, reports unknown
+outcome, clears local polling and ignores late callbacks without resubmitting execution.
+**33 affected client/launcher tests in three suites PASS**, including a new fake-timer
+regression for both POST and GET blackholes and late success replies. Full-script ES5
+parsing still passes. Only focused re-review of this correction is requested; the broad
+422-test baseline is retained. Foundation Process integration with Apple's engine and
+server-context consent remain physical/separately authorized acceptance gaps.

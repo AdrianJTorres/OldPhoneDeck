@@ -304,6 +304,7 @@
     r.onload = function () { if (cb) cb(r.status, r.responseText); };
     r.onerror = function () { if (cb) cb(0, ''); };
     r.send(body === undefined ? null : body);
+    return r;
   }
   function toast(msg) {
     var t = $('toast'); t.textContent = msg; t.style.display = 'block';
@@ -550,11 +551,23 @@
     'timed-out': 'Timed out — outcome unknown', 'busy': 'Busy',
     'not-authorized': 'Not authorized', 'unavailable': 'Unavailable'
   };
+  // Bound feedback requests independently of the server execution deadline. Never retry a POST.
+  function shortcutRequest(method, path, body, callback) {
+    var done = false, request, timer = setTimeout(function () {
+      finish(0, '');
+      if (request) request.abort();
+    }, 5000);
+    function finish(status, text) {
+      if (done) return;
+      done = true; clearTimeout(timer); callback(status, text);
+    }
+    request = xhr(method, path, body, finish);
+  }
   var shortcutPolling = false;
   function runShortcut(uuid) {
     if (shortcutPolling) return toast('Busy');
     shortcutPolling = true;
-    xhr('POST', url('/shortcut'), 'uuid=' + encodeURIComponent(uuid || ''), function (s, text) {
+    shortcutRequest('POST', url('/shortcut'), 'uuid=' + encodeURIComponent(uuid || ''), function (s, text) {
       var d;
       try { d = JSON.parse(text); } catch (e) {}
       if (s !== 200 || !d || !d.id) {
@@ -567,7 +580,7 @@
   }
   function pollShortcut(id, attempts) {
     // Status polling never resubmits execution. Lost feedback leaves an unknown outcome.
-    xhr('GET', url('/shortcut', 'id=' + encodeURIComponent(id)), null, function (s, text) {
+    shortcutRequest('GET', url('/shortcut', 'id=' + encodeURIComponent(id)), null, function (s, text) {
       var d;
       try { d = JSON.parse(text); } catch (e) {}
       if (s !== 200 || !d || !SHORTCUT_MESSAGES[d.status]) {
