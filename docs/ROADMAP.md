@@ -533,7 +533,7 @@ Reserved, not scheduled, not a dependency of V1.
 
 ## M3.3 — macOS Shortcuts
 
-**STATUS: IMPLEMENTED, VALIDATION AND STEERING ACCEPTANCE PENDING (2026-11-09).**
+**STATUS: IMPLEMENTED AND INDEPENDENTLY REVIEWED; PHYSICAL/STEERING ACCEPTANCE PENDING (2026-11-09).**
 Approved base `96c637f84bfaf5872173b440178459906c7eda43`, branch `m3.3/shortcuts`,
 Codex WRITE_OWNER. ADR-018 records the server-owned UUID allowlist and execution policy.
 The existing seven-key ES5 editor supports mixed apps and explicitly approved Shortcuts,
@@ -566,6 +566,25 @@ added a Shortcut-only five-second watchdog that aborts hung requests, reports un
 outcome, clears local polling and ignores late callbacks without resubmitting execution.
 **33 affected client/launcher tests in three suites PASS**, including a new fake-timer
 regression for both POST and GET blackholes and late success replies. Full-script ES5
-parsing still passes. Only focused re-review of this correction is requested; the broad
-422-test baseline is retained. Foundation Process integration with Apple's engine and
+parsing still passes. Focused re-review of correction `76abb72abaaac15bc132cafa08eae64c58119632` is **PASS**;
+the one minor finding is closed with no remaining review findings. The broad 422-test
+baseline is retained. Foundation Process integration with Apple's engine and
 server-context consent remain physical/separately authorized acceptance gaps.
+
+
+Final release build: **PASS with zero warnings**. Isolated HTTPS preview uses separate
+credentials, a separate CA, seven synthetic application controls and only the supplied
+harmless test UUID in its private 0600 server-owned allowlist. No production material is
+read/copied or rotated. The preview process sandbox denies production configuration access.
+Verified HTTPS, shipped-resource identity, authentication and denied-UUID refusal pass.
+Real-browser checks pass long-press, seven-key removal-before-add, mixed Save/reload and
+ordering, byte-exact Cancel, all four widget combinations and five viewport cases including
+480×320. Effective media targets remain at least 44 CSS px. All Shortcut feedback requests
+and other Mac-action POSTs were intercepted before network; no real Shortcut was executed.
+The preview ends with its original seven complete app controls restored, both widgets visible,
+and the approved test Shortcut unselected. Final UI labels mention apps and Shortcuts.
+
+The original checkout/branch and all pre-existing server listeners remain unchanged. No push,
+merge, production change or deployment occurred. Server-context consent, actual Foundation
+Process/Apple-engine execution and physical iPhone 11 acceptance remain **PENDING** and
+require a separately authorized harmless test. Stop here for Steering acceptance.

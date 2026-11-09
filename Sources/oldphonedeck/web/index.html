@@ -204,7 +204,7 @@
   <!-- The deck: 8 keys + widgets -->
   <div id="deck" class="view on">
     <div id="keys"></div>
-    <div id="hint">Hold any key to choose apps</div>
+    <div id="hint">Hold any key to choose apps or Shortcuts</div>
     <div id="music" class="card">
       <div id="mNote">♪</div><img id="mArt" class="none" alt="">
       <div id="mInfo"><div id="mTitle">Nothing playing</div><div id="mArtist">Spotify or Apple Music</div></div>
@@ -260,7 +260,7 @@
     </div>
   </div>
 
-  <!-- Choose the 7 apps -->
+  <!-- Choose the 7 controls -->
   <div id="edit" class="scrim">
     <div class="sheet">
       <fieldset id="widgetChoices">
@@ -268,7 +268,7 @@
         <label><input id="editInternet" type="checkbox"> Internet</label>
         <label><input id="editBatteries" type="checkbox"> Batteries</label>
       </fieldset>
-      <input id="filter" placeholder="Search apps" autocorrect="off" autocapitalize="none">
+      <input id="filter" placeholder="Apps or Shortcuts" autocorrect="off" autocapitalize="none">
       <div class="btns"><div class="btn primary" id="editSave">Save</div><div class="btn" id="editCancel">Cancel</div></div>
       <div id="editCount"></div>
       <div id="editList"></div>
@@ -288,7 +288,7 @@
 (function () {
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
-  var APP_SLOTS = 7;   // 8 keys: 7 apps + Ask Claude
+  var APP_SLOTS = 7;   // 8 keys: 7 controls + Ask Claude
   var modern = 'isSecureContext' in window;   // iOS 11.1+; the 4S is never "modern"
 
   // ---------- plumbing ----------
