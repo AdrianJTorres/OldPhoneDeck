@@ -952,7 +952,7 @@ Full procedure and evidence: `M5.1-STARTUP.md`. M4.1 remains deferred and unchan
 
 ## ADR-020 — HTTPS controls and constrained loopback HTTP camera reads
 
-**Status:** M5.2 implementation and independent T3 review PASS; pending Steering acceptance · 2026-11-10
+**Status:** ACCEPTED — M5.2 merged, production deployed and physical iPhone 11 acceptance PASS · 2026-11-10
 
 **Context.** The HTTP listener used the same bearer admission and action handlers as HTTPS.
 A synthetic native-listener fixture confirmed a LAN-address plaintext `/launch` request with
@@ -998,3 +998,14 @@ known-good M5.1 rollback HTTP expectations without fallback from M5.2. The gener
 checker is tracked; the private adapter is staged separately and its installed predecessor and
 historical results stay untouched. See `M5.1-STARTUP.md` for the active procedure. No admission,
 product, configuration, sandbox or production lifecycle behavior changes in this follow-up.
+
+**Final Steering acceptance (2026-11-10).** PR #14 merged into `main`
+(`577420fbdad00c3892cafc845502c40b74f9a229`); the approved M5.2
+production cutover and native/release-aware health checks PASS per deployment report.
+The user confirmed HTTPS Home Screen operation on iPhone 11: seven controls,
+Safari `key-1`, Configure/Cancel, widgets, multimedia and portrait/landscape.
+LAN HTTP controls denied and loopback MJPEG protocol compatible. Token/TLS,
+sandbox, V2 revision `e877d78bd16a5d15`, and rollback assets preserved.
+No actual OBS app rendering, app/Shortcut execution or fresh logout/reboot
+was tested. Earlier validation and staging statements above refer to the
+pre-deployment phase. M5 security work outside ADR-020 remains open.
