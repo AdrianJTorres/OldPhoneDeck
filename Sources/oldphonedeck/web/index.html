@@ -507,11 +507,12 @@
     if (d.controlsWritable && !Array.isArray(d.controls)) return null;
     return d;
   }
-  // A notepad with a pencil: quick capture that becomes a Claude conversation.
-  var CLAUDE_SVG = '<svg width="36" height="36" viewBox="0 0 36 36">' +
-    '<rect x="7" y="5" width="19" height="26" rx="4.5" fill="#fff"/>' +
-    '<path d="M11.5 13h10M11.5 18h10M11.5 23h6" stroke="#c55e39" stroke-width="2.2" stroke-linecap="round"/>' +
-    '<path d="M24 26.5l6.5-6.5 2.5 2.5-6.5 6.5-3.3.8z" fill="#fff" stroke="#c55e39" stroke-width="1.6" stroke-linejoin="round"/></svg>';
+  // Fixed entry to the existing seven-control editor.
+  var CONFIGURE_SVG = '<svg width="36" height="36" viewBox="0 0 36 36">' +
+    '<path d="M6 10h24M6 18h24M6 26h24" stroke="#fff" stroke-width="2.5" stroke-linecap="round"/>' +
+    '<circle cx="13" cy="10" r="3.5" fill="#c55e39" stroke="#fff" stroke-width="2"/>' +
+    '<circle cx="23" cy="18" r="3.5" fill="#c55e39" stroke="#fff" stroke-width="2"/>' +
+    '<circle cx="13" cy="26" r="3.5" fill="#c55e39" stroke="#fff" stroke-width="2"/></svg>';
   function byPath(p) {
     for (var i = 0; i < launcher.all.length; i++) if (launcher.all[i].path === p) return launcher.all[i];
     return null;
@@ -625,9 +626,7 @@
         }, openEditor));
       })(controls[i]);
     }
-    box.appendChild(key('claude', 'Take note', CLAUDE_SVG, openClaude, function () {
-      xhr('POST', url('/claude'), 'text=', function () { toast('Claude is open on the Mac'); });
-    }));
+    box.appendChild(key('claude', 'Configure', CONFIGURE_SVG, openEditor, openEditor));
   }
 
   // ---------- editor (hold any key) ----------

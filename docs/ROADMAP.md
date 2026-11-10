@@ -4,7 +4,7 @@ Milestone status and scope. Only the current milestone is a mandate; everything 
 is direction, not approval. Steering defines each milestone as a bounded brief before it
 starts (see `docs/STEERING.md` §7).
 
-Legend: **COMPLETE** · **IN PROGRESS** · **NEXT** · **NOT STARTED**
+Legend: **COMPLETE** · **IN PROGRESS** · **NEXT** · **NOT STARTED** · **DEFERRED**
 
 ---
 
@@ -398,7 +398,11 @@ Exit criteria: existing behaviour preserved on the iPhone 11; build clean; ADRs 
 
 ## M3 — PhoneDeck UI
 
-**STATUS: IN PROGRESS**
+**STATUS: COMPLETE — production accepted by Steering** (status recorded 2026-11-10).
+Accepted production baseline: `dc9133701d9106cc7c6dec8caae3bd2bfc53c54a` (M3.4 / PR #10).
+Earlier slice receipts below retain their historical evidence boundaries. Claude-dependent
+note capture is not a verified V1 capability; its unused fixed entry is replaced in the
+separate post-M3 Configure slice.
 
 **M3.1 — Media-first iPhone UI:** implementation accepted by Steering after physical iPhone 11
 validation PASS (2026-11-08); GitHub consolidation merged at `14872a3a`. Implemented in
@@ -427,7 +431,8 @@ rerun for this documentation consolidation. No additional physical checks are in
 
 Current integration status: approved M3.1 merge `14872a3a` is on `origin/main`; Steering
 reports M3.1 production **ACCEPTED**. M3.2.1 leaves that production server unchanged.
-M3 overall remains **IN PROGRESS**; acceptance of M3.1 does not accept later slices.
+At the M3.1 handoff M3 overall remained **IN PROGRESS**. Final M3 production acceptance
+is recorded in the current milestone status above.
 
 **M3.2.1 — Configurable Widgets V2: physical iPhone 11 acceptance PASS; GitHub consolidation pending Steering acceptance.**
 Architecture approved by Steering on 2026-11-08 (ADR-017); based on approved M3.1 merge
@@ -486,7 +491,13 @@ Turn the deck into the intended iPhone 11 control surface.
 
 ## M4 — Developer Deck
 
-**STATUS: NOT STARTED**
+**STATUS: DEFERRED — M4.1 Git Status moved to M5 by Steering** (2026-11-10).
+Implementation `8a65c7bc88fecbe831cd2f1890d1486ed578e049` passed independent focused review
+and physical iPhone 11 acceptance in isolation. It is preserved on `m4.1/read-only-developer`
+with its existing evidence; **do not merge or deploy it**. Safe production execution needs
+an independently confined worker lifecycle beyond the current simple launch model. Direct
+Git loses worker restrictions; nested sandboxes fail; the inheritance exception is rejected.
+No further sandbox investigation or worker implementation is authorized by the Configure task.
 
 Add developer surface, deliberately and narrowly.
 
@@ -509,7 +520,8 @@ Independent review and hardening before V1.
   risk.
 - **Ingress** — verify and complete the M2 limits; remaining timeouts, caps and edge cases.
 - **HIGH risks** — resolve or explicitly accept what remains after M2.
-- **Command boundaries** — prove no path from browser input to arbitrary execution.
+- **Command boundaries** — prove no path from browser input to arbitrary execution; assess
+  deferred M4.1 Git Status worker confinement and lifecycle as a separately scoped M5 task.
 - **Regression testing** — establish the missing test/CI baseline.
 - **Reliability** — startup after reboot, IP change, TLS re-issue, failure visibility.
 
@@ -642,6 +654,26 @@ PR creation, merge and GitHub verification. The accepted product/test blobs rema
 the follow-up records status only. PR #10 integrates that implementation into `main` using the
 established merge-commit method; this integration record takes effect with that merge.
 Existing tests/build/browser/independent-review evidence is reused without repetition.
-**Production is unchanged. M3.4 production deployment is not authorized or claimed.**
-Overall M3 production closure and any next milestone remain for Steering; no M4 work begins.
-**Stop for Steering after GitHub integration verification.**
+**Subsequent Steering closure:** M3.4 is deployed and production accepted at
+`dc9133701d9106cc7c6dec8caae3bd2bfc53c54a`; M3 is COMPLETE. This supersedes the earlier
+integration-only authorization boundary above. The current Configure task does not alter
+production; M4.1 is preserved and deferred to M5.
+
+
+## Post-M3 UX — Configure entry
+
+**STATUS: implementation validated; physical iPhone preview acceptance PENDING** (2026-11-10).
+Base: current `main`, `dc9133701d9106cc7c6dec8caae3bd2bfc53c54a`.
+Replace only the fixed Claude key's visible icon/label and tap/hold interaction with Configure,
+opening the existing `openEditor` flow. Seven configurable controls, V2 persistence, widgets,
+responsive geometry and legacy Claude backend remain unchanged. No M4.1 code is included;
+no new architecture, execution/security changes, production changes, merge or deployment.
+Validation: 15 focused launcher/mixed-control/widget tests PASS, including Configure tap/hold
+opening the editor without dispatching actions, byte-preserving Cancel, complete seven-control
+IDs/order and Save handling. Full script parses as ES5. Isolated HTTPS browser tests verify
+Save/reorder/reload, all widget combinations, five editor viewport cases and 20 exact baseline
+geometry comparisons. Release build PASS with zero warnings. The preview uses separate V2
+fixtures/token/TLS on 8105/8107/8108 and reuses the existing isolation profile unchanged;
+seven original synthetic controls and both widgets are restored for handoff. No Mac actions
+were dispatched. Browser checks do not establish physical iPhone acceptance.
+Stop for Steering and physical iPhone preview acceptance.

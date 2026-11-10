@@ -74,6 +74,35 @@ final class LauncherClientHarness {
 @Suite struct LauncherClientTests {
     private let ready = #"{"selected":["/A.app"],"all":[{"name":"A","path":"/A.app"}],"configuration":"v2","widgets":{"internet":true,"batteries":true},"writable":true,"revision":"revision-a"}"#
 
+    @Test func configureTapAndHoldOpenTheExistingEditorWithoutDispatchingActions() throws {
+        let client = try LauncherClientHarness()
+        let controls = (1...7).map { i in
+            ["id": "stable-\(i)", "action": "app.launch", "parameters": ["path": "/App\(i).app"],
+             "presentation": ["title": "Key \(i)"]] as [String: Any]
+        }
+        let response: [String: Any] = ["selected": (1...7).map { "/App\($0).app" },
+            "all": (1...7).map { ["name": "App\($0)", "path": "/App\($0).app"] },
+            "controls": controls, "controlsWritable": true, "shortcuts": [], "configuration": "v2",
+            "widgets": ["internet": true, "batteries": true], "writable": true, "revision": "configure-revision"]
+        let ready = try #require(String(data: JSONSerialization.data(withJSONObject: response), encoding: .utf8))
+        try client.run("loadKeys()")
+        try client.reply(ready)
+        try client.run("var originalControls = JSON.stringify(launcher.controls); $('keys').children[7].tap()")
+        #expect(try client.run("$('keys').children.length").toInt32() == 8)
+        #expect(try client.run("$('keys').children[7].lastChild.textContent").toString() == "Configure")
+        #expect(try client.run("JSON.stringify(draft) === originalControls && sheets[sheets.length-1][0] === 'edit'").toBool())
+        #expect(try client.run("requests.length").toInt32() == 0)
+        try client.run("$('editInternet').checked = false; $('editCancel').tap(); $('keys').children[7].hold()")
+        #expect(try client.run("$('editInternet').checked && $('editBatteries').checked").toBool())
+        #expect(try client.run("requests.length").toInt32() == 0)
+        #expect(try client.run("JSON.stringify(draft) === originalControls && JSON.stringify(launcher.controls) === originalControls").toBool())
+        try client.run("$('editSave').tap()")
+        #expect(try client.run("requests.length === 1 && requests[0].method === 'POST' && requests[0].path.indexOf('/launcher?') === 0").toBool())
+        #expect(try client.run("JSON.parse(decodeURIComponent(requests[0].body.split('&')[0].slice(9))).map(function(c){return c.id;}).join(',')").toString() == "stable-1,stable-2,stable-3,stable-4,stable-5,stable-6,stable-7")
+        try client.reply(ready)
+        #expect(try client.run("JSON.stringify(launcher.controls) === originalControls && $('keys').children.length === 8").toBool())
+    }
+
     @Test func widgetDraftCancelAndSaveUseTheAuthoritativeResponse() throws {
         let client = try LauncherClientHarness()
         try client.run("loadKeys()")

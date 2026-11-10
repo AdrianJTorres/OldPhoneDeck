@@ -548,7 +548,7 @@ One file: inline CSS, markup and one ES5 IIFE. No framework or build step.
   streaming), plus three sheets: Take note, app editor, token login.
 - **Extension reality (M3.4 accepted; GitHub integration via PR #10):** `renderKeys()` consumes the
   complete configured controls in order through `controlInfo()` (app/Shortcut/unknown), with
-  seven editable slots plus the fixed "Take note" key. `WIDGET_CARDS` drives both visibility
+  seven editable slots plus the fixed Configure key (post-M3 UX, pending acceptance). `WIDGET_CARDS` drives both visibility
   and `layoutWidgetCards()` placement: an equal-width row on modern screens, a column on
   legacy screens. Internet retains its 104px legacy height; other column cards share the
   remaining height. Batteries still shrinks to its content inside its allocated capacity.
@@ -628,3 +628,12 @@ Seven app selections remain untouched until an explicit Save replaces them. No c
 load, save, approval load, build or test executes a real Shortcut. Operator/consent details:
 `M3.3-SHORTCUTS.md`. Physical iPhone 11/server-context execution and Steering acceptance are
 PENDING; production remains untouched.
+
+
+### Post-M3 Configure entry (pending acceptance)
+
+The eighth fixed key is Configure: its label/icon change and both tap/hold callbacks call
+`openEditor()`. Seven configured controls, IDs/order, V2 Save/Cancel, widgets and layout remain
+unchanged. The legacy Claude sheet/client and backend remain for compatibility; this key no
+longer opens or dispatches Claude. Deferred M4.1 Git code is not included. No authentication,
+configuration, sandbox, backend execution or deployment boundary changes.
