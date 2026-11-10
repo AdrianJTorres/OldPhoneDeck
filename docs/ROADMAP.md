@@ -510,7 +510,17 @@ Add developer surface, deliberately and narrowly.
 
 ## M5 — Security & reliability
 
-**STATUS: NOT STARTED**
+**STATUS: IN PROGRESS — M5.1 startup/recovery** (2026-11-10).
+
+M5.1 scope: native user-session startup, duplicate/port protection, failure feedback and
+simple recovery using existing configuration and sandbox. Candidate and operational handoff:
+`M5.1-STARTUP.md`. Isolated testing only; no production restart, installation or merge.
+M5.1 implementation/isolated validation is ready for Steering: startup, crash/explicit
+restart, duplicate/port protection, failure recovery and configuration/TLS continuity PASS;
+31 focused tests, warning-free release and one focused independent review PASS. Temporary
+LaunchAgent removed; production unchanged. Actual login/reboot and integration permissions
+remain human acceptance gates after a separately authorized cutover.
+Remaining M5 security work, including deferred M4.1, is separately scoped.
 
 Independent review and hardening before V1.
 
@@ -656,7 +666,7 @@ established merge-commit method; this integration record takes effect with that 
 Existing tests/build/browser/independent-review evidence is reused without repetition.
 **Subsequent Steering closure:** M3.4 is deployed and production accepted at
 `dc9133701d9106cc7c6dec8caae3bd2bfc53c54a`; M3 is COMPLETE. This supersedes the earlier
-integration-only authorization boundary above. The current Configure task does not alter
+integration-only authorization boundary above. This historical M3.3 task did not alter
 production; M4.1 is preserved and deferred to M5.
 
 
@@ -682,5 +692,7 @@ Steering confirms physical Configure iPhone 11 **PASS** and authorizes publicati
 merge with the established merge-commit method and GitHub verification. The accepted product
 and test blobs remain unchanged; this follow-up records acceptance only. Existing evidence is
 reused without broad tests or another review. Deferred M4.1 commit/branch/evidence remain
-preserved and excluded. **Configure production deployment/restart is not authorized or claimed.**
-Production remains the accepted M3.4 baseline. Stop for Steering after integration verification.
+preserved and excluded. **Historical integration gate:** deployment was not authorized by that integration task.
+Steering now confirms Configure deployed and physically accepted, COMPLETE (2026-11-10),
+on main `c15ccb69cd5930afc941a46f79671cfedd144593`. M5.1 does not change production.
+M5.1 stops for Steering.
