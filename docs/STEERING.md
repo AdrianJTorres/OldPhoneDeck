@@ -214,3 +214,34 @@ No app or Shortcut was executed during acceptance; actual OBS application output
 and a fresh logout/reboot were not tested. M5.1 remains complete; M5 as a whole,
 unscoped token risk and deferred M4.1 remain open. No new production operations
 authorized by this closure.
+
+## Open ChatGPT Shortcut — end-to-end acceptance (2026-11-10)
+
+**Status: COMPLETE — production configuration and real iPhone 11 execution PASS.**
+Reused the existing M3.3 approved-UUID Shortcut path; no product code, API, sandbox
+policy, TLS or token change. The user created the native macOS Shortcut
+`Open Chatgpt` (Safari Create New Tab → `https://chatgpt.com/`). Its actual UUID
+`CE71C698-08EA-4D59-8C91-53790C9EDFF8` was verified against the native
+Shortcuts catalogue. The existing private approval mechanism was validated,
+installed with a single `Open ChatGPT` label/UUID authorization, and loaded
+after a single controlled `gui/501/local.phonedeck` restart. HTTPS `/launcher`
+catalogue, M5.2 HTTPS/WSS health, HTTP LAN denial, credentials, TLS and sandbox
+were reported PASS; rollback assets remained ready.
+
+The user then explicitly replaced the prior Safari `key-1` seventh control in
+PhoneDeck Configure and saved the new seven-control V2 selection with Internet
+and Batteries widgets retained. **The saved configuration intentionally differs
+from the earlier M5.2 revision `e877d78bd16a5d15`; a new revision was not
+supplied. Do not restore the superseded seventh control or stale backups.**
+Steering authorized one real execution; the user confirmed one iPhone 11
+Home Screen tap, PhoneDeck status `Completed`, and Safari on the Mac opening
+`https://chatgpt.com/`. This constitutes real end-to-end acceptance of this
+specific Shortcut integration. No further Shortcut executions or automatic
+retries are authorized by this documentation closure.
+
+M5.2 remains COMPLETE on production binary
+`577420fbdad00c3892cafc845502c40b74f9a229`; the documentation-only
+GitHub main SHA does not imply a newer deployed binary. The other six controls
+and widgets were reported retained; their independent actions were not
+re-executed as part of this test. M5's remaining authentication/reliability
+risks and deferred M4.1 remain open.
