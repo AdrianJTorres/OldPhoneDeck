@@ -154,8 +154,8 @@ let actions = ActionRegistry(shortcuts: shortcuts)
 
 let webRoot = Bundle.module.url(forResource: "web", withExtension: nil)!
 
-// One application policy is supplied to both HTTP transports. The transport has no token knowledge.
-let admission: HTTPAdmission = { DeckRoute.admit($0, token: token) }
+// One application policy receives trusted connection metadata from both listeners.
+let admission: HTTPTransportAdmission = { DeckRoute.admit($0, token: token, transport: $1) }
 let routes: (HTTPRequest, HTTPConnection) -> Void = { req, conn in
     guard let route = DeckRoute.match(method: req.method, path: req.path) else {
         return conn.respond(404, text: "not found")
@@ -230,7 +230,15 @@ let routes: (HTTPRequest, HTTPConnection) -> Void = { req, conn in
         conn.respond(200, "image/jpeg", phoneMedia.latestFrame ?? Data())
     }
 }
-server.start(admission: admission, routes)
+// Cleartext never serves the token-using deck script or a token-entry form.
+// The HTTPS target comes from the native interface address, never Host/forwarded headers.
+server.start(connectionAdmission: admission) { req, conn in
+    if req.path == "/" || req.path == "/index.html" {
+        return conn.respond(200, "text/html; charset=utf-8",
+                            HTTPOnboarding.page(address: lanAddress(), httpsPort: opts.port + 2))
+    }
+    routes(req, conn)
+}
 
 // HTTPS + secure WebSocket for modern iPhones (Safari needs a secure page for camera, mic and speech).
 let lanIP = lanAddress()
@@ -240,7 +248,7 @@ if let identity = LocalTLS.identity(for: lanIP, existingOnly: opts.managedStartu
         let s = try HTTPServer(port: opts.port + 2, parameters: LocalTLS.parameters(identity), queue: server.queue,
                                budget: httpBudget)
         s.onListenerState = { startup?.observe($0, service: "HTTPS") }
-        s.start(admission: admission, routes)
+        s.start(connectionAdmission: admission, routes)
         httpsServer = s
         phoneMedia.onListenerState = { startup?.observe($0, service: "WSS") }
         try phoneMedia.startWebSocket(port: opts.port + 3, identity: identity)
@@ -260,11 +268,11 @@ print("""
 
 OldPhoneDeck is running. On the phone (same Wi-Fi), open Safari and go to:
 
-    http://\(lanIP):\(opts.port)/#k=\(token)
+    https://\(lanIP):\(opts.port + 2)/#k=\(token)
 
 Then tap Share → Add to Home Screen. Hold any key to choose your apps.
 
-Modern iPhone (voice, camera, mic): once, open http://\(lanIP):\(opts.port)/oldphonedeck.mobileconfig,
+HTTPS is required for controls. Once, open http://\(lanIP):\(opts.port)/oldphonedeck.mobileconfig,
 install it, enable it in Settings → General → About → Certificate Trust Settings,
 then use https://\(lanIP):\(opts.port + 2)/#k=\(token)
 Camera for OBS (Media Source): http://localhost:\(opts.port)/camera.mjpg?k=\(token)

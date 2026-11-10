@@ -15,12 +15,12 @@ final class ResourceTestClient {
     private var ready = false
     private var lastState = "setup"
 
-    init(port: NWEndpoint.Port, parameters: NWParameters = .tcp) {
+    init(port: NWEndpoint.Port, parameters: NWParameters = .tcp, host: NWEndpoint.Host = "127.0.0.1") {
         websocket = parameters.defaultProtocolStack.applicationProtocols.contains { $0 is NWProtocolWebSocket.Options }
         if websocket {
             let scheme = parameters.defaultProtocolStack.applicationProtocols.contains { $0 is NWProtocolTLS.Options } ? "wss" : "ws"
             connection = NWConnection(to: .url(URL(string: "\(scheme)://127.0.0.1:\(port.rawValue)/")!), using: parameters)
-        } else { connection = NWConnection(host: "127.0.0.1", port: port, using: parameters) }
+        } else { connection = NWConnection(host: host, port: port, using: parameters) }
         connection.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
             self.lock.lock(); self.lastState = String(describing: state); self.lock.unlock()

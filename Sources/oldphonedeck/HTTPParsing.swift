@@ -251,6 +251,21 @@ enum DeckRoute: CaseIterable {
         allCases.first { $0.method == method && $0.path == path }
     }
 
+    /// Cleartext has an explicit allowlist; new routes require HTTPS by default.
+    /// Apply before token comparison and body admission, including for loopback callers.
+    static func admit(_ head: HTTPRequestHead, token: String,
+                      transport: HTTPTransport) -> Result<Int, HTTPFailure> {
+        if !transport.isTLS {
+            let route = match(method: head.method, path: head.path)
+            let publicRead = route?.isPublic == true
+            let localCameraRead = transport.isLoopback && (route == .cameraStream || route == .cameraFrame)
+            guard publicRead || localCameraRead else {
+                return .failure(HTTPFailure(status: 403, message: "HTTPS required"))
+            }
+        }
+        return admit(head, token: token)
+    }
+
     static func admit(_ head: HTTPRequestHead, token: String) -> Result<Int, HTTPFailure> {
         let candidates = allCases.filter { $0.path == head.path }
         guard !candidates.isEmpty else { return .failure(HTTPFailure(status: 404, message: "not found")) }

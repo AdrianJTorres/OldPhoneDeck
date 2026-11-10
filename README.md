@@ -34,7 +34,8 @@ swift build -c release
 .build/release/oldphonedeck
 ```
 
-It prints a link like `http://192.168.x.x:8045/#k=<token>`. On the phone:
+Controls require HTTPS. Complete the certificate setup below, then use the printed
+`https://192.168.x.x:8047/#k=<token>` link. On the phone:
 
 1. Open that link in **Safari**.
 2. Tap **Share → Add to Home Screen** and launch it from there to run it full screen.
@@ -51,9 +52,11 @@ Tips for a dedicated desk display: set **Auto-Lock → Never**, and use **Guided
 
 They're granted to the app you run `oldphonedeck` from (e.g. Terminal).
 
-### Modern iPhone: voice, camera and mic (optional)
+### HTTPS setup; camera and mic
 
-Safari only allows the microphone, camera and speech recognition on **HTTPS** pages, so OldPhoneDeck creates a private certificate authority on your Mac (stored in `~/.oldphonedeck/tls`).
+All controls use **HTTPS**; Safari also requires it for camera and microphone access.
+OldPhoneDeck creates a private certificate authority on your Mac (stored in `~/.oldphonedeck/tls`).
+HTTP serves credential-free setup and the certificate profile. Never enter your access code on HTTP.
 
 1. On the iPhone, open `http://<mac-ip>:8045/oldphonedeck.mobileconfig` and tap **Allow**.
 2. **Settings → Profile Downloaded → Install.**
@@ -61,6 +64,9 @@ Safari only allows the microphone, camera and speech recognition on **HTTPS** pa
 4. Open `https://<mac-ip>:8047/#k=<token>` and add it to the Home Screen.
 
 **Camera → video calls:** in [OBS](https://obsproject.com), add a *Media Source* with `http://localhost:8045/camera.mjpg?k=<token>`, then click **Start Virtual Camera**.
+The HTTP camera URL works only from loopback (`127.0.0.0/8`, `::1`, or mapped IPv4 loopback),
+with the existing token. LAN camera consumers must use HTTPS; all control APIs require HTTPS even locally.
+
 **Mic → video calls:** install [BlackHole 2ch](https://existential.audio/blackhole/) and restart OldPhoneDeck; pick "BlackHole 2ch" as the microphone in your call app.
 *(For plain FaceTime or Zoom calls, macOS's built-in Continuity Camera is simpler.)*
 

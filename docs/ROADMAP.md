@@ -706,3 +706,38 @@ preserved and excluded. **Historical integration gate:** deployment was not auth
 Steering now confirms Configure deployed and physically accepted, COMPLETE (2026-11-10),
 on main `c15ccb69cd5930afc941a46f79671cfedd144593`. M5.1 does not change production.
 M5.1 stops for Steering.
+
+
+### M5.2 — Cleartext HTTP security boundary
+
+**IMPLEMENTED AND INDEPENDENT T3 REVIEW PASS — pending Steering acceptance; not deployed.**
+Based on authorized main `28a48a00bf3bda047e6eba29e704574dc9798020`, dedicated local
+branch `m5.2/cleartext-http-boundary`. ADR-020 records the policy.
+
+A synthetic native HTTP fixture connected through the Mac's LAN address confirmed the old
+bearer-authenticated `/launch` route reached a fake executor over plaintext. The candidate
+now denies every remote cleartext API before token comparison/body retention. HTTP retains
+public credential-free onboarding/profile GETs, plus authenticated camera GETs only from
+actual numeric IPv4/IPv6 loopback peers. All controls require HTTPS even locally. The HTTP
+page no longer runs the token-using deck; no redirect carries a token. Peer/TLS identity comes
+from Network.framework, never Host or forwarded headers. HTTPS route behavior and WSS stay
+intact; localhost OBS/MJPEG keeps its existing URL and authentication.
+
+**85 focused tests in nine suites PASS**, including real isolated LAN-address IPv4/IPv6
+HTTP denials, forwarded-header spoof attempts, pre-body refusal/no fake action execution,
+loopback/mapped-address camera access, all-route HTTPS acceptance, invalid HTTP/HTTPS/WSS
+tokens, WSS ping past the auth deadline and WSS frame delivery to localhost MJPEG. The
+focused run also covers existing parser/connection, fake app-action, launcher-store and
+Shortcut HTTP behavior. **Release build PASS, zero warnings.** Only synthetic credentials,
+ephemeral TLS imported in memory and fake executors were used; no real apps/Shortcuts ran.
+Evidence: `../operations/m5.2-http-boundary/` (`original-exposure.log`, `focused-tests.log`,
+`release-build.log`). Physical iPhone/OBS application validation and deployment are not claimed.
+
+Production service, latest intentional Safari control/V2 state, widgets, approvals, secrets,
+sandbox and LaunchAgent remain untouched. No production secrets were accessed or copied.
+M4.1 remains deferred; token scopes and broader M5 risks remain open. No push, merge or deploy.
+
+One fresh independent read-only T3 review: **PASS, no blocker, major or minor findings**.
+The reviewer inspected the changed transport/admission boundary, native TLS/WSS wiring,
+regression coverage and retained logs without writing files or running builds/tests.
+Ready for Steering to authorize GitHub integration; no push, merge or production action taken.
