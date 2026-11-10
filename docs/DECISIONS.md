@@ -988,3 +988,13 @@ WSS ping beyond the authentication deadline and WSS-to-MJPEG delivery. Release b
 zero warnings. One fresh independent read-only T3 review PASS, no findings. Synthetic
 native-listener handlers and test-only ephemeral TLS verification do not establish physical
 Safari certificate trust, iPhone acceptance or OBS application acceptance. No deployment occurred.
+
+
+**Operational compatibility follow-up.** Steering accepted the security implementation for
+publication and authorized reconciling the M5.1 runbook/deployment-local health adapter.
+Secure HTTPS data/identity and authenticated WSS/ping are mandatory; M5.2 HTTP denial is
+an expected security result, never health by itself. Explicit verified release policy preserves
+known-good M5.1 rollback HTTP expectations without fallback from M5.2. The generic read-only
+checker is tracked; the private adapter is staged separately and its installed predecessor and
+historical results stay untouched. See `M5.1-STARTUP.md` for the active procedure. No admission,
+product, configuration, sandbox or production lifecycle behavior changes in this follow-up.

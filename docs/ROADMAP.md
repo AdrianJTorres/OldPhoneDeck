@@ -741,3 +741,18 @@ One fresh independent read-only T3 review: **PASS, no blocker, major or minor fi
 The reviewer inspected the changed transport/admission boundary, native TLS/WSS wiring,
 regression coverage and retained logs without writing files or running builds/tests.
 Ready for Steering to authorize GitHub integration; no push, merge or production action taken.
+
+
+M5.2 operational health reconciliation: Steering accepted the original security implementation
+`0263f78` and authorized a narrow compatibility follow-up plus GitHub publication. The active
+M5.1 runbook now makes pinned authenticated HTTPS and WSS authoritative and separates M5.2
+HTTP denial from service health. Explicit release policy retains pre-boundary M5.1 rollback
+expectations and valid custom V2 IDs such as Safari `key-1`. The original deployment-local
+helper remains unchanged; a corrected adapter is staged separately using the tracked read-only
+health checker. Only focused helper/documentation checks run; accepted 85-test/build/T3
+evidence is reused. Production and deferred M4.1 remain untouched; merge is not authorized.
+
+Focused follow-up validation: **12 Python helper tests PASS**; **one native Swift test with
+both M5.2 and M5.1 release-policy cases PASS**, exercising the separately staged adapter.
+HTTPS/WSS checks pin generated fixture certificates and retain CA verification. No production
+helper was installed and no production credential/configuration was opened or changed.
