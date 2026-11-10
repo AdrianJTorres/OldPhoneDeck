@@ -510,17 +510,27 @@ Add developer surface, deliberately and narrowly.
 
 ## M5 — Security & reliability
 
-**STATUS: IN PROGRESS — M5.1 startup/recovery** (2026-11-10).
+**STATUS: IN PROGRESS — M5.1 COMPLETE, production and post-login accepted** (2026-11-10).
 
-M5.1 scope: native user-session startup, duplicate/port protection, failure feedback and
-simple recovery using existing configuration and sandbox. Candidate and operational handoff:
-`M5.1-STARTUP.md`. Isolated testing only; no production restart, installation or merge.
-M5.1 implementation/isolated validation is ready for Steering: startup, crash/explicit
-restart, duplicate/port protection, failure recovery and configuration/TLS continuity PASS;
-31 focused tests, warning-free release and one focused independent review PASS. Temporary
-LaunchAgent removed; production unchanged. Actual login/reboot and integration permissions
-remain human acceptance gates after a separately authorized cutover.
-Remaining M5 security work, including deferred M4.1, is separately scoped.
+**M5.1 — Reliable Startup & Recovery: COMPLETE.** Integrated in PR #12 at
+`4f75b99f760b73f846be6870161cbac3590fd417`; production runs the native Aqua
+user LaunchAgent `local.phonedeck` with `--managed-startup` under the retained sandbox.
+Acceptance: 31 focused tests, warning-free release, one independent review, isolated
+crash/restart/recovery checks, controlled production cutover, authenticated HTTP/HTTPS/WSS,
+and physical iPhone 11 PASS. After a user-initiated logout/login, a new launchd-owned
+process started at 17:08 CET (login at 17:07); no duplicate process or startup errors,
+and token/TLS/sandbox/Shortcut approval state remained unchanged.
+
+**Post-login V2 edit reconciled:** the user intentionally used Configure Save at 17:14 CET
+to replace Activity Monitor (id `app-7`) with Safari (id `key-1`). The resulting revision
+`e877d78bd16a5d15` supersedes `59018df8ab86263f`. The `unrepresentable` status
+reflects inability to project the custom ID into legacy path-list format, not V2
+corruption. Never overwrite this valid newer edit with `config.json.prev`.
+A complete Mac reboot was not tested; login-driven startup was. Changed LAN address
+still requires separately authorized TLS recovery.
+
+Remaining M5 security work, including deferred M4.1 worker confinement and independent
+security review, is separately scoped; M5 overall is not complete.
 
 Independent review and hardening before V1.
 

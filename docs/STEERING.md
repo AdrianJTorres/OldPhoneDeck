@@ -158,7 +158,7 @@ and demonstrable.
 | M2 — Foundations | **IN PROGRESS** — M2.1–M2.4 accepted by Steering; ADR-015 and ADR-016 remain ratified. **M2.5 COMPLETE (2026-11-08)**: S1–S7 accepted; production migration/cutover, rollback rehearsal, production authentication rotation and physical iPhone 11 acceptance PASS. New authenticated device access works and the previous token is rejected. Phase A is complete; Phase B GitHub consolidation is submitted for Steering acceptance without merge or branch deletion. |
 | M3 — PhoneDeck UI | **COMPLETE — production accepted by Steering** at `dc9133701d9106cc7c6dec8caae3bd2bfc53c54a` (M3.4 / PR #10). Seven controls, V2 configuration, widgets, authentication/TLS and empty Shortcut approvals remain accepted. Claude-dependent note capture is not a verified V1 capability. |
 | M4 — Developer Deck | **M4.1 DEFERRED TO M5**: implementation `8a65c7bc88fecbe831cd2f1890d1486ed578e049`, independent focused review and physical iPhone 11 acceptance PASS; production integration blocked by the independently confined worker lifecycle. Preserve commit/branch/evidence; do not merge or deploy. No further sandbox investigations in this task. |
-| M5 — Security & reliability | **M5.1 IN PROGRESS** — reliable startup/recovery candidate; isolated validation only, no production change |
+| M5 — Security & reliability | **M5.1 COMPLETE** — production and login-startup accepted 2026-11-10 at `4f75b99f`; remainder of M5 open (security risks and deferred M4.1) |
 | M6 — PhoneDeck V1 | Not started |
 
 Physically verified on the iPhone 11: Safari loads the deck, Home Screen installation
@@ -192,11 +192,14 @@ acceptance, as confirmed by Steering on 2026-11-10. See ROADMAP's individual
 slice records for historical evidence boundaries.
 
 
-Current authorization: **M5.1 — Reliable Startup & Recovery**, WRITE_OWNER, based on
-main `c15ccb69cd5930afc941a46f79671cfedd144593`. Steering confirms M3 and Configure
-COMPLETE, deployed and physically accepted (2026-11-10). Begin M5 with startup reliability,
-prefer a native user LaunchAgent after isolated sandbox/user-session validation, preserve
-existing production configuration/protections and deferred M4.1 branch/code/evidence.
-No production deployment/restart, reboot/logout, app/Shortcut execution, credential/TLS
-rotation, sandbox weakening, independently confined Git worker, M4.1 integration or merge.
-Prepare the implementation and operational handoff; stop for Steering. See `M5.1-STARTUP.md`.
+Current Steering status (2026-11-10): **M5.1 COMPLETE — production and physical
+post-login acceptance PASS**. Native Aqua user LaunchAgent `local.phonedeck` starts
+authorized release `4f75b99f760b73f846be6870161cbac3590fd417` after login;
+authenticated HTTP/HTTPS/WSS, unchanged token/TLS/sandbox, no duplicate process and
+working iPhone 11 were verified. The user intentionally saved a new seventh control
+(Safari, id `key-1`, replacing Activity Monitor, id `app-7`) after login. Its
+new V2 revision `e877d78bd16a5d15` is valid user state; the legacy projection
+status `unrepresentable` does not evidence damage. Preserve current state and do not
+restore the superseded `config.json.prev`. Full reboot not tested; login startup was.
+M5 remaining security scope and M4.1 remain open. No further deployment or restart
+is authorized by this documentary closure.
