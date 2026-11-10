@@ -191,8 +191,13 @@ but is deferred to M5; the current Configure slice does not deploy. See ROADMAP'
 slice records for historical evidence boundaries.
 
 
-Current authorized work: **Post-M3 UX — Configure entry** from current main. Replace only
-its fixed unused Claude entry with Configure calling the existing editor on tap/hold. Preserve
-seven configurable controls, V2, widgets, geometry and the legacy Claude backend. M4.1 is
-not part of this branch. No production changes, security/execution changes, sandbox permission
-changes, Git worker, push, merge or deployment. Stop for Steering after the isolated preview.
+Current authorization: **Configure GitHub integration**, following Steering-confirmed
+implementation and physical iPhone 11 acceptance **PASS** for
+`af924143aae1bed52680cee9dc65e0ae4c4ce3f6` (2026-11-10). Publish the approved branch to
+`AdrianJTorres/OldPhoneDeck`, create a PR to `main`, verify exact scope/head/base and merge
+using a merge commit. Reuse the accepted 15 focused tests, ES5, 20 geometry comparisons and
+warning-free release evidence without broad repetition or another review. Seven controls,
+V2, widgets, geometry and the legacy Claude backend remain unchanged. Deferred M4.1 is not
+part of this branch and its commit/evidence must be preserved. No production deployment or
+restart, authentication/TLS/configuration change, security/sandbox change, or next milestone
+is authorized. Stop for Steering after GitHub/main and clean local synchronization checks.

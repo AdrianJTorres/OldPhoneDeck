@@ -662,12 +662,14 @@ production; M4.1 is preserved and deferred to M5.
 
 ## Post-M3 UX — Configure entry
 
-**STATUS: implementation validated; physical iPhone preview acceptance PENDING** (2026-11-10).
+**STATUS: Configure implementation and physical iPhone 11 acceptance PASS**, confirmed by
+Steering on 2026-11-10 for `af924143aae1bed52680cee9dc65e0ae4c4ce3f6`.
 Base: current `main`, `dc9133701d9106cc7c6dec8caae3bd2bfc53c54a`.
 Replace only the fixed Claude key's visible icon/label and tap/hold interaction with Configure,
 opening the existing `openEditor` flow. Seven configurable controls, V2 persistence, widgets,
 responsive geometry and legacy Claude backend remain unchanged. No M4.1 code is included;
-no new architecture, execution/security changes, production changes, merge or deployment.
+no new architecture, execution/security changes or production changes. GitHub publication
+and merge are separately authorized below; production deployment remains excluded.
 Validation: 15 focused launcher/mixed-control/widget tests PASS, including Configure tap/hold
 opening the editor without dispatching actions, byte-preserving Cancel, complete seven-control
 IDs/order and Save handling. Full script parses as ES5. Isolated HTTPS browser tests verify
@@ -676,4 +678,9 @@ geometry comparisons. Release build PASS with zero warnings. The preview uses se
 fixtures/token/TLS on 8105/8107/8108 and reuses the existing isolation profile unchanged;
 seven original synthetic controls and both widgets are restored for handoff. No Mac actions
 were dispatched. Browser checks do not establish physical iPhone acceptance.
-Stop for Steering and physical iPhone preview acceptance.
+Steering confirms physical Configure iPhone 11 **PASS** and authorizes publication, PR creation,
+merge with the established merge-commit method and GitHub verification. The accepted product
+and test blobs remain unchanged; this follow-up records acceptance only. Existing evidence is
+reused without broad tests or another review. Deferred M4.1 commit/branch/evidence remain
+preserved and excluded. **Configure production deployment/restart is not authorized or claimed.**
+Production remains the accepted M3.4 baseline. Stop for Steering after integration verification.
