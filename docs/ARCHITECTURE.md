@@ -73,11 +73,14 @@ order and then blocks in `NSApplication.run()`:
 5. `PhoneMediaServer` + `AudioOut` are constructed; `AudioOut` may return `nil` if no
    matching audio device exists (warns, continues without mic playback).
 6. `Stats().start()` and `Music().start()` begin their timers.
-7. One application admission closure and the `routes` handler are handed to
-   `server.start(admission:_:)`; HTTPS receives the same policy and handler.
+7. Both listeners supply native TLS/peer metadata to `DeckRoute.admit` before body admission.
+   HTTPS retains the shared route handler; HTTP serves credential-free onboarding and only
+   admits public profile reads plus authenticated camera reads from numeric loopback peers
+   (M5.2, ADR-020).
 8. `LocalTLS.identity(for:)` generates or loads the TLS identity; on success the HTTPS
    listener (`port + 2`) and the secure WebSocket listener (`port + 3`) start. **Failure
-   is non-fatal** — the process continues HTTP-only with a printed warning.
+   is non-fatal** — the process continues with HTTP onboarding/loopback camera only and a printed warning;
+   control APIs remain unavailable without HTTPS (ADR-020).
 9. Accessibility is checked (and prompted) once at startup.
 10. `app.run()` blocks. SIGINT exits cleanly.
 
@@ -91,6 +94,7 @@ binary, stop it with Ctrl-C.
 | `Package.swift` | — | One executable plus a Swift Testing target; copies `web/`, links AppKit | — |
 | `main.swift` | — | Options, token, LAN address, application admission/route wiring, startup | `Options`, `loadToken`, `lanAddress`, `admission`, `routes` |
 | `HTTPServer.swift` | — | Bounded receive/deadlines, one request per connection, responses, MJPEG | `HTTPConnection`, `HTTPServer` |
+| `HTTPTransport.swift` | — | Trusted connection context, numeric loopback classification and credential-free HTTP onboarding | `HTTPTransport`, `HTTPTransportAdmission`, `HTTPOnboarding` |
 | `HTTPParsing.swift` | — | Incremental framing; route metadata, admission and pure parameter validation, including launcher selection syntax | `HTTPRequestParser`, `HTTPRequestHead`, `HTTPRequest`, `HTTPFailure`, `DeckRoute` |
 | `ResourceLimits.swift` | — | Explicit HTTP/media budgets, message validation, frame handoff, audio accounting | `HTTPConnectionBudget`, `MediaSessionBudget`, `PhoneMediaMessage`, `LatestFrameHandoff`, `AudioQueueBudget` |
 | `ActionRegistry.swift` | — | Approved-action boundary: identifier syntax, server-authored metadata, typed parameters, authorization, controlled execution, shared `POST /launch` handler | `ActionID`, `ActionKind`, `ActionDescriptor`, `ActionParameters`, `AppLaunchParameters`, `ActionOutcome`, `ActionRegistry`, `AppLaunchExecutor`, `AppLaunchAdapter`, `AppLaunchRoute` |
@@ -147,7 +151,10 @@ Admission order:
 1. Validate syntax and framing, including strict Content-Length, no Transfer-Encoding,
    and no Expect. Reject duplicate Content-Length, Content-Type or Host fields and
    duplicate decoded `k` query parameters.
-2. Unknown path → `404`, with no body allowance.
+2. Apply native transport policy (ADR-020): cleartext permits only public GET onboarding/profile
+   and authenticated loopback camera GETs. Other HTTP requests → `403 HTTPS required`, before
+   token comparison or body retention. HTTPS continues with the complete route table.
+   Unknown path on HTTPS → `404`, with no body allowance.
 3. Known protected path: query token must match, otherwise `403`, before body collection.
    A body token cannot authenticate or override this decision.
 4. Unsupported method on a known public/authenticated path → `405`.
@@ -238,9 +245,9 @@ registry, and maps the outcome onto the historical response shape: the server na
 - A 12-character token is minted from a 31-character alphabet on first run and stored in
   the selected configuration directory's `token` (default `~/.oldphonedeck/token`, mode `0600`).
   Deleting the file rotates it.
-- The deck URL carries `#k=<token>` in the **fragment**, which the browser does not send
-  to the server; the client copies it to `localStorage` and appends `?k=<token>` to every
-  API request.
+- The HTTPS deck URL carries `#k=<token>` in the **fragment**, which the browser does not send
+  to the server; the HTTPS client copies it to `localStorage` and appends `?k=<token>` to every
+  API request. HTTP serves credential-free onboarding, not this client.
 - Every known protected API path is checked during header admission by a single
   string comparison against the query token, before body accumulation.
 - WebSocket admission and message validation are described below; the token remains the
@@ -435,7 +442,7 @@ HIGH
 | Risk | Where |
 |---|---|
 | M2.1/M2.2 bound HTTP bodies, connections, media clients and buffering. M2.2 passed independent review and targeted physical camera validation; physical audio and continuous live MJPEG remain unverified. These minimum bounds are not full DoS protection. | `HTTPServer.swift`, `ResourceLimits.swift`, `PhoneMedia.swift` |
-| Cleartext HTTP carries the full-control token and all commands — **M5** | `:8045` route table |
+| Cleartext control exposure: **M5.2 implemented and independently reviewed PASS; pending Steering acceptance/deployment**. HTTP denies every nonpublic route before token comparison except authenticated camera reads from actual numeric loopback peers. HTTPS/WSS remain the control/media transports. The running production release is unchanged. | `HTTPTransport`, `DeckRoute.admit`, `main.swift`; ADR-020 |
 | One unscoped token authorises every action; no expiry, scopes or audit — **M5**. M2.3 adds the minimum action-authorization boundary for app launch; the token itself still has one scope and authorises every legacy route. | `DeckRoute.admit`, `ActionRegistry`, wired by `main.swift` |
 
 MEDIUM
@@ -653,3 +660,37 @@ callbacks. Managed LocalTLS only imports the retained identity. A generated Aqua
 LaunchAgent runs the binary directly through the retained sandbox and uses native launchd
 restart/throttling. No custom supervisor or Git worker. See `M5.1-STARTUP.md` for staged
 installation, isolated evidence and recovery. No production installation is claimed.
+
+
+## M5.2 — Cleartext HTTP admission policy
+
+The M5.2 candidate listeners provide `HTTPTransport` from their native TLS protocol stack
+and each accepted `NWConnection.endpoint`. `Host`, `Forwarded`, `X-Forwarded-For` and
+`X-Forwarded-Proto` never establish peer or TLS identity. Only numeric `127.0.0.0/8`, `::1`
+and IPv4-mapped loopback qualify as local; unresolved names, missing peers and other endpoint
+types fail closed. IPv4-compatible non-mapped IPv6 does not qualify.
+
+| Transport / peer | Admitted routes |
+|---|---|
+| HTTP, any peer | GET `/`, `/index.html`, `/oldphonedeck.mobileconfig`, without authentication |
+| HTTP, actual loopback only | Also GET `/camera.mjpg`, `/camera.jpg`, with existing token validation |
+| HTTPS, any peer | Existing complete route table, existing methods/body limits/token authentication |
+| WSS | Unchanged native TLS/WebSocket authentication and media behavior |
+
+All other cleartext requests receive `403 HTTPS required` before token comparison or body
+retention, and cannot reach the route/action handler. There are no authenticated redirects.
+HTTP pages contain no deck script, login form, token reflection or storage access: they offer
+the certificate profile and a credential-free HTTPS link derived from the Mac's native address,
+not request headers. The complete deck is served over HTTPS. The launch banner and README
+now direct control clients to HTTPS. Existing HTTPS Home Screen entries and the localhost
+OBS URL remain compatible. An old HTTP Home Screen entry must be replaced with HTTPS.
+
+This removes server acceptance and the shipped HTTP page's automatic transmission of control
+credentials on the LAN. A caller can still send a token to HTTP explicitly; rejection cannot
+undo that transmission. Certificate bootstrap remains unauthenticated as required by the
+existing onboarding workflow; its trust must be established on the intended Mac/network.
+The OBS exception still uses the existing unscoped bearer locally; token scopes, local host
+compromise, broader authentication hardening and deferred M4.1 are outside M5.2.
+
+No production configuration, seven controls, widgets, approvals, sandbox, LaunchAgent or service
+was changed. This is source implementation evidence, not deployment or physical acceptance.

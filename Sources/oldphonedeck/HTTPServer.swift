@@ -152,6 +152,7 @@ final class HTTPConnection {
 
 final class HTTPServer {
     private let listener: NWListener
+    private let usesTLS: Bool
     let queue: DispatchQueue
     let budget: HTTPConnectionBudget
     var port: NWEndpoint.Port? { listener.port }
@@ -161,14 +162,23 @@ final class HTTPServer {
          budget: HTTPConnectionBudget = HTTPConnectionBudget()) throws {
         self.queue = queue
         self.budget = budget
+        usesTLS = parameters.defaultProtocolStack.applicationProtocols.contains { $0 is NWProtocolTLS.Options }
         listener = try NWListener(using: parameters, on: NWEndpoint.Port(rawValue: port)!)
     }
 
     func start(admission: @escaping HTTPAdmission, _ handler: @escaping (HTTPRequest, HTTPConnection) -> Void) {
-        listener.newConnectionHandler = { [queue, budget] nw in
+        start(connectionAdmission: { head, _ in admission(head) }, handler)
+    }
+
+    /// The listener supplies TLS identity and the accepted socket peer, never request headers.
+    func start(connectionAdmission: @escaping HTTPTransportAdmission,
+               _ handler: @escaping (HTTPRequest, HTTPConnection) -> Void) {
+        listener.newConnectionHandler = { [queue, budget, usesTLS] nw in
             // Excess connections are cancelled before starting TLS or allocating a parser.
             guard let lease = budget.acquire() else { nw.cancel(); return }
-            HTTPConnection(nw, lease: lease).start(queue: queue, admission: admission, handler: handler)
+            let transport = HTTPTransport(isTLS: usesTLS, peer: nw.endpoint)
+            HTTPConnection(nw, lease: lease).start(queue: queue,
+                admission: { connectionAdmission($0, transport) }, handler: handler)
         }
         listener.stateUpdateHandler = { [weak self] state in
             self?.onListenerState?(state)

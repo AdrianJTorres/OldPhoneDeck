@@ -948,3 +948,53 @@ avoid the legacy credential banner. Loaded/listening does not prove authenticate
 health. The generator stages artifacts only; identity checks, current-state backups,
 explicit production cutover approval and authenticated HTTP/HTTPS/WSS checks remain gates.
 Full procedure and evidence: `M5.1-STARTUP.md`. M4.1 remains deferred and unchanged.
+
+
+## ADR-020 — HTTPS controls and constrained loopback HTTP camera reads
+
+**Status:** M5.2 implementation and independent T3 review PASS; pending Steering acceptance · 2026-11-10
+
+**Context.** The HTTP listener used the same bearer admission and action handlers as HTTPS.
+A synthetic native-listener fixture confirmed a LAN-address plaintext `/launch` request with
+a synthetic token reached a fake executor. Public certificate onboarding and local OBS camera
+consumption still need HTTP. No production secrets or actions were used to establish exposure.
+
+**Decision.** Reuse the existing Network.framework listeners, parser, admission, token check,
+route table and executors. Supply TLS presence from native listener parameters and peer identity
+from the accepted `NWConnection.endpoint` to application admission. Never trust forwarded
+headers, Host or resolved names. Accept numeric IPv4 loopback, IPv6 loopback and IPv4-mapped
+loopback equivalently; unknown peers fail closed.
+
+On cleartext, allow only public GET onboarding/profile routes and token-authenticated GET
+`/camera.mjpg` and `/camera.jpg` from loopback. Every other route/method fails before token
+comparison/body retention or action dispatch, including control requests from localhost.
+HTTPS retains all existing functions and authentication; WSS is unchanged. New routes require
+HTTPS by default. HTTP serves a script-free, credential-free onboarding page instead of the
+full token-using deck, without redirects or token reflection. The HTTPS link uses the native
+Mac address, never client headers; clients enter the code only on HTTPS. Preserve the public
+certificate profile, existing localhost OBS URL, all V2 state and existing execution boundaries.
+
+**Consequences.** LAN control clients must use HTTPS, including Home Screen entries. LAN OBS
+must use HTTPS; local OBS remains compatible. No proxy, new service, framework, dependency,
+token scope or sandbox change is needed. HTTP cannot prevent a caller voluntarily transmitting
+a credential; unauthenticated certificate bootstrap and use of the full bearer on loopback
+remain existing trust limits. No broader authentication-risk closure is claimed. Production
+installation, physical acceptance and milestone closure remain separate Steering gates.
+
+
+**Validation.** 85 focused tests in nine suites PASS, including native IPv4/IPv6 LAN denials,
+loopback/mapped-loopback camera reads, HTTPS fake action execution, wrong-token rejection,
+WSS ping beyond the authentication deadline and WSS-to-MJPEG delivery. Release build PASS,
+zero warnings. One fresh independent read-only T3 review PASS, no findings. Synthetic
+native-listener handlers and test-only ephemeral TLS verification do not establish physical
+Safari certificate trust, iPhone acceptance or OBS application acceptance. No deployment occurred.
+
+
+**Operational compatibility follow-up.** Steering accepted the security implementation for
+publication and authorized reconciling the M5.1 runbook/deployment-local health adapter.
+Secure HTTPS data/identity and authenticated WSS/ping are mandatory; M5.2 HTTP denial is
+an expected security result, never health by itself. Explicit verified release policy preserves
+known-good M5.1 rollback HTTP expectations without fallback from M5.2. The generic read-only
+checker is tracked; the private adapter is staged separately and its installed predecessor and
+historical results stay untouched. See `M5.1-STARTUP.md` for the active procedure. No admission,
+product, configuration, sandbox or production lifecycle behavior changes in this follow-up.
