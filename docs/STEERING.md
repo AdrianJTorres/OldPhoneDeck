@@ -158,7 +158,7 @@ and demonstrable.
 | M2 — Foundations | **IN PROGRESS** — M2.1–M2.4 accepted by Steering; ADR-015 and ADR-016 remain ratified. **M2.5 COMPLETE (2026-11-08)**: S1–S7 accepted; production migration/cutover, rollback rehearsal, production authentication rotation and physical iPhone 11 acceptance PASS. New authenticated device access works and the previous token is rejected. Phase A is complete; Phase B GitHub consolidation is submitted for Steering acceptance without merge or branch deletion. |
 | M3 — PhoneDeck UI | **COMPLETE — production accepted by Steering** at `dc9133701d9106cc7c6dec8caae3bd2bfc53c54a` (M3.4 / PR #10). Seven controls, V2 configuration, widgets, authentication/TLS and empty Shortcut approvals remain accepted. Claude-dependent note capture is not a verified V1 capability. |
 | M4 — Developer Deck | **M4.1 DEFERRED TO M5**: implementation `8a65c7bc88fecbe831cd2f1890d1486ed578e049`, independent focused review and physical iPhone 11 acceptance PASS; production integration blocked by the independently confined worker lifecycle. Preserve commit/branch/evidence; do not merge or deploy. No further sandbox investigations in this task. |
-| M5 — Security & reliability | **M5.1 COMPLETE** — production and login-startup accepted 2026-11-10 at `4f75b99f`; remainder of M5 open (security risks and deferred M4.1) |
+| M5 — Security & reliability | **M5.1 + M5.2 COMPLETE** — login-startup and HTTP transport security deployed and physically accepted 2026-11-10; remaining auth/execution risks and M4.1 deferred |
 | M6 — PhoneDeck V1 | Not started |
 
 Physically verified on the iPhone 11: Safari loads the deck, Home Screen installation
@@ -203,3 +203,14 @@ status `unrepresentable` does not evidence damage. Preserve current state and do
 restore the superseded `config.json.prev`. Full reboot not tested; login startup was.
 M5 remaining security scope and M4.1 remain open. No further deployment or restart
 is authorized by this documentary closure.
+
+Current Steering acceptance update (2026-11-10): **M5.2 COMPLETE** on merged
+`main` `577420fbdad00c3892cafc845502c40b74f9a229`; physical iPhone 11
+HTTPS Home Screen acceptance PASS. Production cutover report confirmed LAN HTTP
+control denials (IPv4/IPv6), HTTPS/WSS, local OBS/MJPEG protocol, release-aware
+health, LaunchAgent continuity and preservation of latest V2 revision
+`e877d78bd16a5d15` including Safari `key-1`, credentials/TLS and sandbox.
+No app or Shortcut was executed during acceptance; actual OBS application output
+and a fresh logout/reboot were not tested. M5.1 remains complete; M5 as a whole,
+unscoped token risk and deferred M4.1 remain open. No new production operations
+authorized by this closure.
