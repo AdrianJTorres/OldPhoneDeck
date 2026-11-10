@@ -510,7 +510,7 @@ Add developer surface, deliberately and narrowly.
 
 ## M5 — Security & reliability
 
-**STATUS: IN PROGRESS — M5.1 COMPLETE, production and post-login accepted** (2026-11-10).
+**STATUS: IN PROGRESS — M5.1 and M5.2 COMPLETE; remaining M5 security work open** (2026-11-10).
 
 **M5.1 — Reliable Startup & Recovery: COMPLETE.** Integrated in PR #12 at
 `4f75b99f760b73f846be6870161cbac3590fd417`; production runs the native Aqua
@@ -710,7 +710,7 @@ M5.1 stops for Steering.
 
 ### M5.2 — Cleartext HTTP security boundary
 
-**IMPLEMENTED AND INDEPENDENT T3 REVIEW PASS — pending Steering acceptance; not deployed.**
+**COMPLETE — merged, production deployed and physical iPhone 11 accepted by Steering (2026-11-10).**
 Based on authorized main `28a48a00bf3bda047e6eba29e704574dc9798020`, dedicated local
 branch `m5.2/cleartext-http-boundary`. ADR-020 records the policy.
 
@@ -756,3 +756,22 @@ Focused follow-up validation: **12 Python helper tests PASS**; **one native Swif
 both M5.2 and M5.1 release-policy cases PASS**, exercising the separately staged adapter.
 HTTPS/WSS checks pin generated fixture certificates and retain CA verification. No production
 helper was installed and no production credential/configuration was opened or changed.
+
+**Steering production closure (2026-11-10): M5.2 COMPLETE.** PR #14 was merged into
+`main` at `577420fbdad00c3892cafc845502c40b74f9a229`. Codex reported a
+controlled M5.2 cutover via the existing Aqua LaunchAgent `gui/501/local.phonedeck`
+(PID 85330 at 21:10 CET), release build PASS without warnings, authenticated HTTPS/WSS,
+IPv4/IPv6 LAN HTTP control denials, authenticated loopback OBS/MJPEG protocol PASS,
+and release-aware health PASS. Exact latest production V2 bytes/revision
+`e877d78bd16a5d15`, all seven controls including Safari `key-1`, widget settings,
+absent Shortcut approvals, TLS/token identities and sandbox were preserved. Verified
+rollback assets remain available; rollback was not required.
+
+The user then confirmed physical iPhone 11 Home Screen acceptance over HTTPS 8047:
+seven controls and Safari `key-1`, Configure/Cancel, widgets, multimedia and both
+orientations all PASS without executing real apps or Shortcuts. Actual OBS rendering,
+app/Shortcut execution and another logout/reboot were not tested in M5.2.
+M5.1 login-startup evidence remains accepted, and M4.1 stays deferred.
+**M5 overall remains in progress:** unscoped bearer token and other independent
+security/reliability risks still require later scope and decisions.
+This is a documentation-only closure; no production operation or code change.

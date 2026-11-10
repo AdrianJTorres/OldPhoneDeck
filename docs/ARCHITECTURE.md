@@ -442,7 +442,7 @@ HIGH
 | Risk | Where |
 |---|---|
 | M2.1/M2.2 bound HTTP bodies, connections, media clients and buffering. M2.2 passed independent review and targeted physical camera validation; physical audio and continuous live MJPEG remain unverified. These minimum bounds are not full DoS protection. | `HTTPServer.swift`, `ResourceLimits.swift`, `PhoneMedia.swift` |
-| Cleartext control exposure: **M5.2 implemented and independently reviewed PASS; pending Steering acceptance/deployment**. HTTP denies every nonpublic route before token comparison except authenticated camera reads from actual numeric loopback peers. HTTPS/WSS remain the control/media transports. The running production release is unchanged. | `HTTPTransport`, `DeckRoute.admit`, `main.swift`; ADR-020 |
+| Cleartext control exposure: **RESOLVED for the approved M5.2 scope — deployed and physically accepted 2026-11-10**. Remote LAN HTTP control routes are denied before token comparison; authenticated camera reads remain available only from native numeric loopback peers. HTTPS/WSS handle controls and media. Local user-token exposure and the broader unscoped bearer risk remain open. | `HTTPTransport`, `DeckRoute.admit`, `main.swift`; ADR-020 |
 | One unscoped token authorises every action; no expiry, scopes or audit — **M5**. M2.3 adds the minimum action-authorization boundary for app launch; the token itself still has one scope and authorises every legacy route. | `DeckRoute.admit`, `ActionRegistry`, wired by `main.swift` |
 
 MEDIUM
@@ -694,3 +694,13 @@ compromise, broader authentication hardening and deferred M4.1 are outside M5.2.
 
 No production configuration, seven controls, widgets, approvals, sandbox, LaunchAgent or service
 was changed. This is source implementation evidence, not deployment or physical acceptance.
+
+M5.2 subsequent production acceptance (2026-11-10): PR #14 merged at
+`577420fbdad00c3892cafc845502c40b74f9a229`; controlled cutover, IPv4/IPv6
+remote HTTP rejection, HTTPS/WSS, local MJPEG protocol, unchanged TLS/token/sandbox
+and exact V2 state passed per Codex report. The user confirmed physical iPhone 11
+Home Screen HTTPS usability, all seven controls including Safari `key-1`, Configure,
+widgets, multimedia and both orientations. No real actions or Shortcuts were
+executed during this acceptance; actual OBS application rendering and another
+logout/reboot were not tested. Earlier implementation-only statements above remain
+historical evidence. The separate unscoped token and remaining M5 risks stay open.
