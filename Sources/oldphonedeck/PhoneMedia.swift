@@ -16,6 +16,7 @@ final class PhoneMediaServer {
     private let sessions = MediaSessionBudget()
     private var connections: [UUID: MediaWebSocketConnection] = [:]
     private let authenticationTimeout: TimeInterval
+    var onListenerState: ((NWListener.State) -> Void)?
     var onFrame: ((Data) -> Void)?
 
     var latestFrame: Data? { lock.lock(); defer { lock.unlock() }; return _latestFrame }
@@ -49,6 +50,7 @@ final class PhoneMediaServer {
             guard let self else { conn.cancel(); return }
             self.accept(conn)
         }
+        ws.stateUpdateHandler = { [weak self] state in self?.onListenerState?(state) }
         ws.start(queue: queue)
         wsListener = ws
     }

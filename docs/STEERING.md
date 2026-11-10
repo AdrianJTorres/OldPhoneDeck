@@ -158,7 +158,7 @@ and demonstrable.
 | M2 — Foundations | **IN PROGRESS** — M2.1–M2.4 accepted by Steering; ADR-015 and ADR-016 remain ratified. **M2.5 COMPLETE (2026-11-08)**: S1–S7 accepted; production migration/cutover, rollback rehearsal, production authentication rotation and physical iPhone 11 acceptance PASS. New authenticated device access works and the previous token is rejected. Phase A is complete; Phase B GitHub consolidation is submitted for Steering acceptance without merge or branch deletion. |
 | M3 — PhoneDeck UI | **COMPLETE — production accepted by Steering** at `dc9133701d9106cc7c6dec8caae3bd2bfc53c54a` (M3.4 / PR #10). Seven controls, V2 configuration, widgets, authentication/TLS and empty Shortcut approvals remain accepted. Claude-dependent note capture is not a verified V1 capability. |
 | M4 — Developer Deck | **M4.1 DEFERRED TO M5**: implementation `8a65c7bc88fecbe831cd2f1890d1486ed578e049`, independent focused review and physical iPhone 11 acceptance PASS; production integration blocked by the independently confined worker lifecycle. Preserve commit/branch/evidence; do not merge or deploy. No further sandbox investigations in this task. |
-| M5 — Security & reliability | Not started |
+| M5 — Security & reliability | **M5.1 IN PROGRESS** — reliable startup/recovery candidate; isolated validation only, no production change |
 | M6 — PhoneDeck V1 | Not started |
 
 Physically verified on the iPhone 11: Safari loads the deck, Home Screen installation
@@ -187,17 +187,16 @@ review/test repetition was part of consolidation. Steering subsequently confirme
 deployed and physically accepted on iPhone 11 (2026-11-09). This status update records that
 human acceptance; it does not claim new automated or physical checks. Steering subsequently
 accepted deployed M3.4 and M3 production closure. M4.1 passed isolated physical acceptance
-but is deferred to M5; the current Configure slice does not deploy. See ROADMAP's individual
+but is deferred to M5. Configure subsequently deployed and passed physical production
+acceptance, as confirmed by Steering on 2026-11-10. See ROADMAP's individual
 slice records for historical evidence boundaries.
 
 
-Current authorization: **Configure GitHub integration**, following Steering-confirmed
-implementation and physical iPhone 11 acceptance **PASS** for
-`af924143aae1bed52680cee9dc65e0ae4c4ce3f6` (2026-11-10). Publish the approved branch to
-`AdrianJTorres/OldPhoneDeck`, create a PR to `main`, verify exact scope/head/base and merge
-using a merge commit. Reuse the accepted 15 focused tests, ES5, 20 geometry comparisons and
-warning-free release evidence without broad repetition or another review. Seven controls,
-V2, widgets, geometry and the legacy Claude backend remain unchanged. Deferred M4.1 is not
-part of this branch and its commit/evidence must be preserved. No production deployment or
-restart, authentication/TLS/configuration change, security/sandbox change, or next milestone
-is authorized. Stop for Steering after GitHub/main and clean local synchronization checks.
+Current authorization: **M5.1 — Reliable Startup & Recovery**, WRITE_OWNER, based on
+main `c15ccb69cd5930afc941a46f79671cfedd144593`. Steering confirms M3 and Configure
+COMPLETE, deployed and physically accepted (2026-11-10). Begin M5 with startup reliability,
+prefer a native user LaunchAgent after isolated sandbox/user-session validation, preserve
+existing production configuration/protections and deferred M4.1 branch/code/evidence.
+No production deployment/restart, reboot/logout, app/Shortcut execution, credential/TLS
+rotation, sandbox weakening, independently confined Git worker, M4.1 integration or merge.
+Prepare the implementation and operational handoff; stop for Steering. See `M5.1-STARTUP.md`.

@@ -120,8 +120,10 @@ These are not preferences. Changing one requires a Steering decision recorded as
   and no build step.
 - **LAN-first.** The Mac is the server; the phone is the client. No cloud service, no
   accounts, no telemetry leaving the machine.
-- **Simple deploy model.** Build one binary, run it. No daemon manager, no container,
-  no provisioning step beyond the documented permissions.
+- **Simple deploy model.** Build one binary, run it. No custom daemon manager, no container,
+  no provisioning step beyond the documented permissions. M5.1 evaluates a native Aqua
+  user LaunchAgent as a scoped exception (ADR-019); production installation needs Steering
+  acceptance and separate cutover authorization.
 - **Do not introduce** Electron, React, Node, a database, or a web framework. If a task
   seems to require one, the task is wrong — raise it with Steering.
 

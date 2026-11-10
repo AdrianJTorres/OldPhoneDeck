@@ -17,8 +17,12 @@ enum LocalTLS {
     static func use(configDir: URL) { dir = configDir.appendingPathComponent("tls") }
 
     /// Returns a TLS identity for `ip`, creating the CA and/or server cert as needed.
-    static func identity(for ip: String) -> sec_identity_t? {
+    static func identity(for ip: String, existingOnly: Bool = false) -> sec_identity_t? {
         do {
+            if existingOnly {
+                guard try String(contentsOf: dir.appendingPathComponent("server.ip"), encoding: .utf8) == ip else { return nil }
+                return try loadIdentity()
+            }
             try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             if !exists("ca.key") || !exists("ca.pem") { try makeCA() }
             let stamp = (try? String(contentsOf: dir.appendingPathComponent("server.ip"), encoding: .utf8)) ?? ""

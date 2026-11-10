@@ -155,6 +155,7 @@ final class HTTPServer {
     let queue: DispatchQueue
     let budget: HTTPConnectionBudget
     var port: NWEndpoint.Port? { listener.port }
+    var onListenerState: ((NWListener.State) -> Void)?
 
     init(port: UInt16, parameters: NWParameters = .tcp, queue: DispatchQueue = DispatchQueue(label: "http"),
          budget: HTTPConnectionBudget = HTTPConnectionBudget()) throws {
@@ -169,7 +170,8 @@ final class HTTPServer {
             guard let lease = budget.acquire() else { nw.cancel(); return }
             HTTPConnection(nw, lease: lease).start(queue: queue, admission: admission, handler: handler)
         }
-        listener.stateUpdateHandler = { state in
+        listener.stateUpdateHandler = { [weak self] state in
+            self?.onListenerState?(state)
             if case .failed(let e) = state { print("Server failed: \(e)"); exit(1) }
         }
         listener.start(queue: queue)

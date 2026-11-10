@@ -923,3 +923,28 @@ the user's existing seven application selections until an explicit editor Save.
 server-triggered test must use the intended binary, login session and launch context, with
 human handling of any macOS consent. Terminal's Allow Always is not inherited evidence.
 Builds and tests use fakes. Production changes, merge and acceptance remain unauthorized.
+
+
+## ADR-019 — Native user-session startup and fail-closed recovery
+
+**Status:** M5.1 candidate; pending Steering acceptance · 2026-11-10
+
+Steering authorized evaluating a native user LaunchAgent for reliable login startup,
+without a new architecture. Run the existing sandboxed Swift binary directly in Aqua,
+with RunAtLoad, unsuccessful-exit KeepAlive and a 30-second throttle. This is a narrow
+exception to the former manual-only launch procedure, not a new supervisor. The logged-in
+user session remains necessary for Mac integrations. LaunchDaemon/root operation and a
+custom supervisor are rejected. Production remains on its existing launch until accepted.
+
+Managed startup requires existing V2/token/TLS, matching LAN address, a lifetime kernel
+lock and free required ports. Required listener failure exits for native restart; missing
+state never triggers credential/TLS generation or an HTTP-only fallback. Changed LAN/TLS
+requires separate authorized recovery. Preserve production sandbox restrictions, ports,
+seven controls, widgets and Shortcut approvals. Do not prompt for Accessibility on an
+unattended launch. Existing permissions and physical behavior remain separate acceptance.
+
+Use launchd state plus a private stderr log for diagnosis, with raw stdout discarded to
+avoid the legacy credential banner. Loaded/listening does not prove authenticated service
+health. The generator stages artifacts only; identity checks, current-state backups,
+explicit production cutover approval and authenticated HTTP/HTTPS/WSS checks remain gates.
+Full procedure and evidence: `M5.1-STARTUP.md`. M4.1 remains deferred and unchanged.

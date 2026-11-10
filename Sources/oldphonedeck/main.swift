@@ -5,6 +5,7 @@ import ApplicationServices
 
 struct Options {
     var port: UInt16 = 8045                // http = port, https = port+2, secure WebSocket = port+3
+    var managedStartup = false
     var micDevice = "BlackHole"            // output device that receives a modern iPhone's mic
     var configDir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".oldphonedeck")
 
@@ -44,6 +45,7 @@ struct Options {
         var it = args.dropFirst().makeIterator()
         while let a = it.next() {
             switch a {
+            case "--managed-startup": managedStartup = true
             case "--port": port = UInt16(it.next() ?? "") ?? port
             case "--mic-device": micDevice = it.next() ?? micDevice
             case "--config-dir":
@@ -57,6 +59,7 @@ struct Options {
             case "-h", "--help":
                 print("""
                 oldphonedeck: turn an old iPhone into a Stream Deck-style control panel for your Mac
+                  --managed-startup require existing V2/token/TLS; lock instance and fail on startup errors
                   --port N          HTTP port (default 8045; HTTPS uses N+2, WebSocket N+3)
                   --mic-device NAME audio device that receives the phone's mic (default BlackHole)
                   --config-dir PATH configuration directory for the token, launcher config and TLS
@@ -84,6 +87,7 @@ func loadToken() -> String {
     if let t = try? String(contentsOf: file, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty {
         return t
     }
+    if opts.managedStartup { ManagedStartup.report("existing token could not be loaded"); exit(1) }
     let t = (0..<12).map { _ in String("abcdefghjkmnpqrstuvwxyz23456789".randomElement()!) }.joined()
     try? FileManager.default.createDirectory(at: configDir, withIntermediateDirectories: true)
     try? t.write(to: file, atomically: true, encoding: .utf8)
@@ -109,6 +113,15 @@ func lanAddress() -> String {
     return addr
 }
 
+let startup: ManagedStartup?
+if opts.managedStartup {
+    do { startup = try ManagedStartup(directory: configDir, port: opts.port, address: lanAddress()) }
+    catch {
+        ManagedStartup.report((error as? ManagedStartup.Failure)?.rawValue ?? "preflight failed")
+        exit(1)
+    }
+} else { startup = nil }
+startup?.armDeadline()
 let token = loadToken()
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)
@@ -117,7 +130,8 @@ app.setActivationPolicy(.accessory)
 
 let server: HTTPServer
 let httpBudget = HTTPConnectionBudget()
-do { server = try HTTPServer(port: opts.port, budget: httpBudget) } catch { print("Cannot listen on \(opts.port): \(error)"); exit(1) }
+do { server = try HTTPServer(port: opts.port, budget: httpBudget) } catch { ManagedStartup.report("HTTP listener creation failed"); exit(1) }
+server.onListenerState = { startup?.observe($0, service: "HTTP") }
 
 // Camera + mic from a modern iPhone (browser, over the secure WebSocket).
 let cameraViewers = MJPEGViewers() // touched only on server.queue
@@ -221,19 +235,24 @@ server.start(admission: admission, routes)
 // HTTPS + secure WebSocket for modern iPhones (Safari needs a secure page for camera, mic and speech).
 let lanIP = lanAddress()
 var httpsServer: HTTPServer?
-if let identity = LocalTLS.identity(for: lanIP) {
+if let identity = LocalTLS.identity(for: lanIP, existingOnly: opts.managedStartup) {
     do {
         let s = try HTTPServer(port: opts.port + 2, parameters: LocalTLS.parameters(identity), queue: server.queue,
                                budget: httpBudget)
+        s.onListenerState = { startup?.observe($0, service: "HTTPS") }
         s.start(admission: admission, routes)
         httpsServer = s
+        phoneMedia.onListenerState = { startup?.observe($0, service: "WSS") }
         try phoneMedia.startWebSocket(port: opts.port + 3, identity: identity)
-    } catch { print("⚠️  HTTPS failed to start: \(error)") }
-}
+    } catch {
+        if startup != nil { ManagedStartup.report("HTTPS/WSS listener creation failed"); exit(1) }
+        print("⚠️  HTTPS failed to start: \(error)")
+    }
+} else if startup != nil { ManagedStartup.report("retained TLS identity could not be loaded"); exit(1) }
 
 // MARK: Permissions + start
 
-if !AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary) {
+if !opts.managedStartup && !AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary) {
     print("⚠️  Grant Accessibility permission (System Settings → Privacy & Security → Accessibility) so Take note can press Return in Claude.")
 }
 

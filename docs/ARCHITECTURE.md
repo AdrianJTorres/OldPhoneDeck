@@ -640,3 +640,16 @@ configuration, sandbox, backend execution or deployment boundary changes.
 
 Steering confirms Configure physical iPhone 11 PASS for `af924143aae1bed52680cee9dc65e0ae4c4ce3f6`.
 GitHub integration is authorized; production deployment/restart remains excluded.
+
+
+### M5.1 managed startup candidate
+
+Steering confirms Configure deployed and physically accepted on 2026-11-10; M3 and Configure
+are COMPLETE. Production retains its existing nohup + sandbox launch pending M5.1 acceptance.
+The opt-in `--managed-startup` entry point adds a lifetime `startup.lock`, strict existing
+V2/token/TLS and LAN checks, all-port preflight and required-listener failure/deadline handling.
+`ManagedStartup.swift` owns these checks; HTTPServer and PhoneMedia expose listener-state
+callbacks. Managed LocalTLS only imports the retained identity. A generated Aqua user
+LaunchAgent runs the binary directly through the retained sandbox and uses native launchd
+restart/throttling. No custom supervisor or Git worker. See `M5.1-STARTUP.md` for staged
+installation, isolated evidence and recovery. No production installation is claimed.
