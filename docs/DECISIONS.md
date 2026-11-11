@@ -1018,6 +1018,7 @@ merged in [PR #17](https://github.com/AdrianJTorres/OldPhoneDeck/pull/17)
 at `8e46ce8eee719c623c6e0357652fd5ec1067008f`. Separate production
 permission remediation, controlled binary cutover and physical iPhone 11
 acceptance subsequently confirmed PASS.
+
 S1 reproduced `0644` server key/PKCS#12 creation under umask `022` and confirmed the
 production modes through metadata only: a MEDIUM local-reader risk, with no HIGH
 authentication bypass proven. The single-bearer model is provisionally accepted.
@@ -1041,6 +1042,3 @@ Do not silently chmod during identity load; no scopes or authentication redesign
 were added. Historical backup and rollback procedures are in
 `M5.3-TLS-PERMISSIONS.md`. M5 overall remains open.
 
-do not silently chmod during load. No token scopes, authentication redesign, production
-chmod/chown, credential rotation, restart or deployment is authorized by S2. Backup,
-rollback and future validation are specified in `M5.3-TLS-PERMISSIONS.md`.
