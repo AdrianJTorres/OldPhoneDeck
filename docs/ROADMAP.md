@@ -526,6 +526,7 @@ User-confirmed iPhone 11 physical PASS: Home Screen HTTPS, seven keys
 portrait/landscape. Live revision `bf4da13b431a2bf8` retained.
 No real Mac actions were executed as part of this deployment acceptance.
 M5 overall and deferred M4.1 remain open; see `M5.3-TLS-PERMISSIONS.md`.
+
 **STATUS: IN PROGRESS — M5.1, M5.2 and M5.3-S2 COMPLETE; remaining M5 work open** (2026-11-11).
 
 **M5.1 — Reliable Startup & Recovery: COMPLETE.** Integrated in PR #12 at
