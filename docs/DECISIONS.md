@@ -1012,10 +1012,12 @@ pre-deployment phase. M5 security work outside ADR-020 remains open.
 
 ## ADR-021 — Owner-only TLS private material without identity rotation
 
-**Status:** M5.3-S2 implemented; independent T3 review PASS at
-`626c17d9a48e7b7a7c919bf5cc67ffe5bed348b2`. Merge and production remediation
-remain separate Steering gates. **Date:** 2026-11-11.
-
+**Status:** ACCEPTED — M5.3-S2 complete on 2026-11-11.
+Independent T3 review PASS at `626c17d9a48e7b7a7c919bf5cc67ffe5bed348b2`;
+merged in [PR #17](https://github.com/AdrianJTorres/OldPhoneDeck/pull/17)
+at `8e46ce8eee719c623c6e0357652fd5ec1067008f`. Separate production
+permission remediation, controlled binary cutover and physical iPhone 11
+acceptance subsequently confirmed PASS.
 S1 reproduced `0644` server key/PKCS#12 creation under umask `022` and confirmed the
 production modes through metadata only: a MEDIUM local-reader risk, with no HIGH
 authentication bypass proven. The single-bearer model is provisionally accepted.
@@ -1028,7 +1030,17 @@ identity without permission repair or regeneration, including managed startup.
 Public certificates, format/password, trust chain and existing secure identity remain
 compatible. Malicious same-user filesystem mutation is outside this boundary.
 
-Existing production files require a separately authorized permission-only operation;
+The original source implementation did not authorize production changes.
+Steering subsequently authorized a permissions-only production operation, then
+a separate controlled binary cutover; both passed according to Codex receipts.
+The user physically accepted the deployed iPhone 11 HTTPS Home Screen experience
+(seven controls, ChatGPT slot 6, TradingView slot 7, widgets, Configure/Cancel,
+both orientations). Production private TLS modes are `0600`, and retained
+identity/token and V2 revision `bf4da13b431a2bf8` remain unchanged.
+Do not silently chmod during identity load; no scopes or authentication redesign
+were added. Historical backup and rollback procedures are in
+`M5.3-TLS-PERMISSIONS.md`. M5 overall remains open.
+
 do not silently chmod during load. No token scopes, authentication redesign, production
 chmod/chown, credential rotation, restart or deployment is authorized by S2. Backup,
 rollback and future validation are specified in `M5.3-TLS-PERMISSIONS.md`.
