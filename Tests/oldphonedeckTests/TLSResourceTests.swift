@@ -9,30 +9,8 @@ func resourceTestIdentity() throws -> sec_identity_t {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent("phonedeck-test-" + UUID().uuidString)
     try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: directory) }
-    func openssl(_ arguments: [String]) throws {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/openssl")
-        process.arguments = arguments
-        process.currentDirectoryURL = directory
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        try process.run()
-        process.waitUntilExit()
-        try #require(process.terminationStatus == 0)
-    }
-    try openssl(["req", "-new", "-newkey", "rsa:2048", "-nodes", "-keyout", "key.pem", "-out", "request.pem", "-subj", "/CN=localhost"])
-    try openssl(["x509", "-req", "-in", "request.pem", "-signkey", "key.pem", "-days", "1", "-out", "cert.pem"])
-    try openssl(["pkcs12", "-export", "-inkey", "key.pem", "-in", "cert.pem", "-out", "identity.p12", "-passout", "pass:fixture-only"])
-    let data = try Data(contentsOf: directory.appendingPathComponent("identity.p12"))
-    var options: [String: Any] = [kSecImportExportPassphrase as String: "fixture-only"]
-    if #available(macOS 15.0, *) { options[kSecImportToMemoryOnly as String] = true }
-    else { throw NSError(domain: "test-requires-memory-only-import", code: 1) }
-    var items: CFArray?
-    try #require(SecPKCS12Import(data as CFData, options as CFDictionary, &items) == errSecSuccess)
-    let entry = try #require((items as? [[String: Any]])?.first)
-    let ref = try #require(entry[kSecImportItemIdentity as String])
-    let identity = ref as! SecIdentity
-    return try #require(sec_identity_create(identity))
+    guard #available(macOS 15.0, *) else { throw NSError(domain: "test-requires-memory-only-import", code: 1) }
+    return try #require(LocalTLS.identity(for: "127.0.0.1", in: directory))
 }
 
 func resourceTLSClient(websocket: Bool = false) -> NWParameters {

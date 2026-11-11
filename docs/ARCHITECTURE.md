@@ -450,7 +450,7 @@ MEDIUM
 | Risk | Where |
 |---|---|
 | Response-send, stalled-MJPEG-send, pre-ready WS handshake and authenticated WS idle timeouts remain deferred to **M5**. Resource counts are bounded; stalled clients can still occupy the available slots. | `HTTPServer.swift`, `PhoneMedia.swift` |
-| `server.key` and `server.p12` are `0644`; PKCS#12 password hardcoded; CA downloadable unauthenticated | `TLS.swift`, `/oldphonedeck.mobileconfig` |
+| Production `server.key`/`server.p12` remain `0644`. The M5.3-S2 candidate reserves private outputs at `0600` and rejects unsafe retained files (ADR-021); production permission remediation is separate. PKCS#12 password remains fixed and the public CA remains downloadable. | `TLS.swift`, `/oldphonedeck.mobileconfig`, `M5.3-TLS-PERMISSIONS.md` |
 | Atomic visibility is not complete power-loss durability: file `fsync` is required, directory sync is best-effort, no `F_FULLFSYNC`. `.prev` retains only one generation; frozen legacy data cannot recover post-migration edits. A downgrade sees only the pre-migration selection. | `ConfigurationStore`, ADR-016 |
 | Frontend geometry and `APP_SLOTS` are hardcoded | `index.html` `layout`, `renderKeys` |
 | One serial queue serves both listeners; full app-directory rescan per icon/launch request | `HTTPServer.queue`, `Apps.list()` |
@@ -482,11 +482,12 @@ preserved. The startup banner names the selected directory.
 | `config.lock` | `ConfigurationStore` lock acquisition | `0600` | Regular, no-follow file; advisory `flock(LOCK_EX \| LOCK_NB)` held across migration/write/recovery |
 | `launcher.json` | No writer in this branch | Existing mode retained | Frozen legacy array, read only when `config.json` is absent; never rewritten or deleted |
 | `config.json.tmp-*`, `config.json.prev.tmp-*` | `ConfigurationStore` | `0600` | Exclusive random same-directory temporaries; operation-owned cleanup, no startup sweep |
-| `tls/ca.key` | `LocalTLS.makeCA` | `0600` | CA private key |
+| `tls/ca.key` | `LocalTLS.makeCA` | `0600` before writing in M5.3-S2 | CA private key; retained secret validation also applies |
 | `tls/ca.pem`, `ca.csr`, `ca.ext`, `ca.srl` | `LocalTLS.makeCA` | `0644` | CA material |
 | `tls/oldphonedeck-ca.cer` | `LocalTLS.makeCA` | `0644` | DER served as the iOS profile |
-| `tls/server.key`, `server.pem`, `server.csr`, `server.ext` | `LocalTLS.makeServerCert` | `0644` | Server cert, SAN = LAN IP + `127.0.0.1` + `localhost`, 800 days |
-| `tls/server.p12` | `LocalTLS.makeServerCert` | `0644` | Identity bundle (hardcoded password) |
+| `tls/server.key` | `LocalTLS.makeServerCert` | M5.3-S2: `0600` before writing; production remains `0644` | Server private key; no load-time repair |
+| `tls/server.pem`, `server.csr`, `server.ext` | `LocalTLS.makeServerCert` | `0644` | Public server cert/CSR/extensions, SAN = LAN IP + `127.0.0.1` + `localhost`, 800 days |
+| `tls/server.p12` | `LocalTLS.makeServerCert` | M5.3-S2: `0600` before writing; production remains `0644` | Identity bundle; unchanged PKCS#12 format/password |
 | `tls/server.ip` | `LocalTLS.makeServerCert` | `0644` | LAN IP stamp for re-issue |
 | `$TMPDIR/oldphonedeck-art` | `Music.fetchArtwork` | — | Apple Music artwork relay |
 

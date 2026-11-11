@@ -510,6 +510,14 @@ Add developer surface, deliberately and narrowly.
 
 ## M5 — Security & reliability
 
+**M5.3-S2 — TLS private material hardening: implemented and tested; independent review pending (2026-11-11).**
+Base `ae9cbf3b73334cd5ca8c229382375e1f6aeab554`; dedicated branch
+`m5.3/tls-private-material`. ADR-021 limits this slice to private-file creation,
+retained identity validation and a separate permission-remediation plan. The bearer
+model is provisionally accepted. Independent T3 review, merge and any production
+permission changes/deployment remain separate gates. Production is unchanged;
+M4.1 remains deferred. See `M5.3-TLS-PERMISSIONS.md`.
+
 **STATUS: IN PROGRESS — M5.1 and M5.2 COMPLETE; remaining M5 security work open** (2026-11-10).
 
 **M5.1 — Reliable Startup & Recovery: COMPLETE.** Integrated in PR #12 at
