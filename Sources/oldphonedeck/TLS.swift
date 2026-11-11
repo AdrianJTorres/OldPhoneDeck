@@ -121,12 +121,9 @@ enum LocalTLS {
             try TLSPrivateMaterial.validateDirectory(directory)
             // An incomplete or unsafe retained identity is an operator recovery case, never
             // permission repair or a reason to replace its CA/certificates.
-            let retained = try ["ca.key", "ca.pem", "server.key", "server.p12", "server.pem", "server.ip"].contains {
-                var info = stat()
-                if lstat(directory.appendingPathComponent($0).path, &info) == 0 { return true }
-                guard errno == ENOENT else { throw TLSPrivateMaterial.Failure.unsafeFile }
-                return false
-            }
+            // Only an empty directory is fresh. A retained public CA or auxiliary file
+            // also forbids silently generating a replacement trust chain.
+            let retained = !(try FileManager.default.contentsOfDirectory(atPath: directory.path)).isEmpty
             if retained || existingOnly { try TLSPrivateMaterial.validate(in: directory) }
             if existingOnly {
                 guard try String(contentsOf: directory.appendingPathComponent("server.ip"), encoding: .utf8) == ip else { return nil }

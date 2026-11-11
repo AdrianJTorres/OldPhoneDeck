@@ -169,6 +169,25 @@ struct TLSPrivateMaterialTests {
         }
     }
 
+    @Test(.enabled(if: ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 15),
+          arguments: ["oldphonedeck-ca.cer", "ca.ext", "server.csr", "unexpected-remnant"])
+    func residualTLSArtifactsCannotTriggerAReplacementCA(name: String) throws {
+        let dir = try directory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        try #require(LocalTLS.identity(for: "127.0.0.1", in: dir) != nil)
+        for entry in try FileManager.default.contentsOfDirectory(atPath: dir.path) where entry != name {
+            try FileManager.default.removeItem(at: dir.appendingPathComponent(entry))
+        }
+        if name == "unexpected-remnant" {
+            try Data("retained synthetic state".utf8).write(to: dir.appendingPathComponent(name))
+        }
+        let before = try snapshot(dir)
+        for existingOnly in [false, true] {
+            #expect(LocalTLS.identity(for: "127.0.0.1", in: dir, existingOnly: existingOnly) == nil)
+            #expect(try snapshot(dir) == before)
+        }
+    }
+
     @Test(.enabled(if: ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 15))
     func corruptRetainedIdentityDoesNotRegenerateOnChangedIP() throws {
         let dir = try directory()
