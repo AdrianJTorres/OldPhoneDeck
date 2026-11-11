@@ -26,7 +26,8 @@ final class ManagedStartup {
             close(fd); throw Failure.lock
         }
         do {
-            for name in ["token", "config.json", "tls/ca.key", "tls/ca.pem", "tls/server.pem", "tls/server.p12", "tls/server.ip"] {
+            try TLSPrivateMaterial.validate(in: directory.appendingPathComponent("tls"))
+            for name in ["token", "config.json", "tls/ca.pem", "tls/server.pem", "tls/server.ip"] {
                 let path = directory.appendingPathComponent(name)
                 let values = try path.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
                 guard values.isRegularFile == true, values.isSymbolicLink != true,

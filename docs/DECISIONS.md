@@ -1009,3 +1009,26 @@ sandbox, V2 revision `e877d78bd16a5d15`, and rollback assets preserved.
 No actual OBS app rendering, app/Shortcut execution or fresh logout/reboot
 was tested. Earlier validation and staging statements above refer to the
 pre-deployment phase. M5 security work outside ADR-020 remains open.
+
+## ADR-021 — Owner-only TLS private material without identity rotation
+
+**Status:** M5.3-S2 implemented; independent T3 review PASS at
+`626c17d9a48e7b7a7c919bf5cc67ffe5bed348b2`. Merge and production remediation
+remain separate Steering gates. **Date:** 2026-11-11.
+
+S1 reproduced `0644` server key/PKCS#12 creation under umask `022` and confirmed the
+production modes through metadata only: a MEDIUM local-reader risk, with no HIGH
+authentication bypass proven. The single-bearer model is provisionally accepted.
+
+Reserve `ca.key`, `server.key` and `server.p12` as `0600` before writing. Retained
+secrets must be current-user-owned, nonempty regular files, one link, no symlinks,
+no extended ACL and exact owner-only mode. Validate descriptors and import PKCS#12
+from the checked descriptor. Reject an unsafe TLS directory or incomplete/unsafe
+identity without permission repair or regeneration, including managed startup.
+Public certificates, format/password, trust chain and existing secure identity remain
+compatible. Malicious same-user filesystem mutation is outside this boundary.
+
+Existing production files require a separately authorized permission-only operation;
+do not silently chmod during load. No token scopes, authentication redesign, production
+chmod/chown, credential rotation, restart or deployment is authorized by S2. Backup,
+rollback and future validation are specified in `M5.3-TLS-PERMISSIONS.md`.

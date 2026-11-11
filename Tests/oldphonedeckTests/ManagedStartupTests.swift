@@ -7,8 +7,12 @@ struct ManagedStartupTests {
     private func fixture() throws -> URL {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: dir.appendingPathComponent("tls"), withIntermediateDirectories: true)
-        for name in ["token", "tls/ca.key", "tls/ca.pem", "tls/server.pem", "tls/server.p12"] {
+        for name in ["token", "tls/ca.key", "tls/ca.pem", "tls/server.key", "tls/server.pem", "tls/server.p12"] {
             try Data("fixture".utf8).write(to: dir.appendingPathComponent(name))
+        }
+        for name in TLSPrivateMaterial.names {
+            try FileManager.default.setAttributes([.posixPermissions: 0o600],
+                ofItemAtPath: dir.appendingPathComponent("tls/" + name).path)
         }
         try Data("127.0.0.1".utf8).write(to: dir.appendingPathComponent("tls/server.ip"))
         try Data(#"{"version":2,"controls":[],"widgets":{"internet":true,"batteries":false}}"#.utf8)
@@ -27,6 +31,21 @@ struct ManagedStartupTests {
             try ManagedStartup(directory: dir, port: 0, address: "127.0.0.1")
         }
         #expect(!FileManager.default.fileExists(atPath: dir.appendingPathComponent("token").path))
+    }
+
+    @Test(arguments: TLSPrivateMaterial.names)
+    func unsafePrivateMaterialFailsBeforeStartupWithoutRepair(name: String) throws {
+        let dir = try fixture()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let secret = dir.appendingPathComponent("tls/" + name)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: secret.path)
+        let configuration = try Data(contentsOf: dir.appendingPathComponent("config.json"))
+        #expect(throws: ManagedStartup.Failure.state) {
+            try ManagedStartup(directory: dir, port: 0, address: "127.0.0.1")
+        }
+        #expect(try Data(contentsOf: dir.appendingPathComponent("config.json")) == configuration)
+        #expect(try String(contentsOf: secret, encoding: .utf8) == "fixture")
+        #expect(try (FileManager.default.attributesOfItem(atPath: secret.path)[.posixPermissions] as? NSNumber)?.intValue == 0o644)
     }
 
     @Test func occupiedPortRefusesPartialStartup() throws {
