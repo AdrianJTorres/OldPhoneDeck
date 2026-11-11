@@ -1012,8 +1012,9 @@ pre-deployment phase. M5 security work outside ADR-020 remains open.
 
 ## ADR-021 — Owner-only TLS private material without identity rotation
 
-**Status:** Implementation authorized by Steering for M5.3-S2; independent review,
-merge and production remediation remain separate gates. **Date:** 2026-11-11.
+**Status:** M5.3-S2 implemented; independent T3 review PASS at
+`626c17d9a48e7b7a7c919bf5cc67ffe5bed348b2`. Merge and production remediation
+remain separate Steering gates. **Date:** 2026-11-11.
 
 S1 reproduced `0644` server key/PKCS#12 creation under umask `022` and confirmed the
 production modes through metadata only: a MEDIUM local-reader risk, with no HIGH
