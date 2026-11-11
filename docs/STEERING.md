@@ -245,3 +245,42 @@ GitHub main SHA does not imply a newer deployed binary. The other six controls
 and widgets were reported retained; their independent actions were not
 re-executed as part of this test. M5's remaining authentication/reliability
 risks and deferred M4.1 remain open.
+
+## M5.3-S2 — TLS private material: final Steering acceptance (2026-11-11)
+
+**STATUS: COMPLETE — merged, production remediation, controlled deployment and
+physical iPhone 11 acceptance PASS.** M5.3-S1 identified one reproducible MEDIUM
+local-reader risk (`server.key` and `server.p12` at `0644`) but no HIGH authentication
+bypass or unauthorized execution. The existing full-control bearer model was
+provisionally accepted for this slice, not replaced with scopes or OAuth.
+
+The M5.3-S2 fix (ADR-021) landed via [PR #17](https://github.com/AdrianJTorres/OldPhoneDeck/pull/17)
+at `8e46ce8eee719c623c6e0357652fd5ec1067008f`. It reserves
+`ca.key`, `server.key` and `server.p12` at `0600` before writing and rejects
+insecure retained identities without silent repair or regeneration. Focused
+validation: 14 TLS/HTTPS/WSS and 5 managed-startup tests PASS; warning-free release;
+one independent T3 review PASS with its specific CA-regeneration finding fixed and
+rechecked. Those were implementation/review results, not new physical tests.
+
+In a separately authorized permissions-only production operation, Codex reported
+`server.key` and `server.p12` changed to `0600` (`ca.key` already `0600`),
+identity bytes/CA fingerprint/IP mapping/token unchanged, private `0700` backup
+verified, HTTPS/WSS and M5.2 HTTP restrictions PASS, and no process restart.
+The subsequent controlled release cutover deployed the merged source with one
+managed LaunchAgent restart; Codex reported active PID `88786` surviving the
+deployment shell, health PASS, all TLS private files at `0600`, unchanged
+certificates/token/sandbox/plist, a verified rollback backup and no rollback.
+
+**Final physical acceptance (user-confirmed):** iPhone 11 Home Screen HTTPS
+connected; all seven controls rendered with **Open ChatGPT in position 6** and
+**TradingView in position 7**; Internet/Batteries visible; Configure/Cancel worked
+without saving; portrait and landscape both PASS. Production V2 revision
+`bf4da13b431a2bf8`, complete control order/IDs/parameters/metadata and the
+approved Open ChatGPT UUID `CE71C698-08EA-4D59-8C91-53790C9EDFF8`
+were reported preserved. This release acceptance did **not** execute real apps
+or Shortcuts or verify new OBS rendering. Do not restore older V2 revisions
+(`e877d78bd16a5d15` and `85092ef77d2d8462` are superseded).
+
+**M5.3-S2 is closed, not all M5.** Remaining reliability/ingress timeouts,
+other documented residual security risks and deferred M4.1 stay separately open.
+No further production operation is authorized by this documentary closure.

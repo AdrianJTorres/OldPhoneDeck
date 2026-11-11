@@ -510,20 +510,24 @@ Add developer surface, deliberately and narrowly.
 
 ## M5 — Security & reliability
 
-**M5.3-S2 — TLS private material hardening: implemented, tested and independent T3 review PASS; awaiting Steering (2026-11-11).**
-Base `ae9cbf3b73334cd5ca8c229382375e1f6aeab554`; dedicated branch
-`m5.3/tls-private-material`. ADR-021 limits this slice to private-file creation,
-retained identity validation and a separate permission-remediation plan. The bearer
-model is provisionally accepted. Independent T3 review, merge and any production
-permission changes/deployment remain separate gates. Production is unchanged;
-M4.1 remains deferred. See `M5.3-TLS-PERMISSIONS.md`.
-The fresh read-only review passed at `626c17d9a48e7b7a7c919bf5cc67ffe5bed348b2`
-after its residual-public-CA regeneration finding was reproduced, corrected and
-independently verified. Independent validation: 14 focused TLS/HTTPS/WSS tests,
-5 managed-startup tests and a release build with zero compiler warnings. No open
-review finding, production remediation or physical acceptance is claimed.
+**M5.3-S2 — TLS private material hardening: COMPLETE (2026-11-11).**
+[PR #17](https://github.com/AdrianJTorres/OldPhoneDeck/pull/17) merged to
+`main` at `8e46ce8eee719c623c6e0357652fd5ec1067008f` (ADR-021).
+Private TLS outputs are created at owner-only `0600` and unsafe retained identities
+fail closed. One independent T3 review PASS (specific CA-regeneration finding
+fixed and rechecked); 14 focused TLS/HTTPS/WSS + 5 managed-startup tests PASS;
+release build zero warnings. No token-scope redesign.
+Separate production permission remediation PASS: `ca.key`, `server.key` and
+`server.p12` all `0600`; identity/token preserved, private backup verified.
+Controlled production cutover PASS on the merged source, HTTPS/WSS and M5.2 HTTP
+policy PASS; no certificate/token rotation, rollback or V2 change.
+User-confirmed iPhone 11 physical PASS: Home Screen HTTPS, seven keys
+(Open ChatGPT slot 6, TradingView slot 7), both widgets, Configure/Cancel,
+portrait/landscape. Live revision `bf4da13b431a2bf8` retained.
+No real Mac actions were executed as part of this deployment acceptance.
+M5 overall and deferred M4.1 remain open; see `M5.3-TLS-PERMISSIONS.md`.
 
-**STATUS: IN PROGRESS — M5.1 and M5.2 COMPLETE; remaining M5 security work open** (2026-11-10).
+**STATUS: IN PROGRESS — M5.1, M5.2 and M5.3-S2 COMPLETE; remaining M5 work open** (2026-11-11).
 
 **M5.1 — Reliable Startup & Recovery: COMPLETE.** Integrated in PR #12 at
 `4f75b99f760b73f846be6870161cbac3590fd417`; production runs the native Aqua
